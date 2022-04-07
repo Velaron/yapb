@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -175,6 +175,10 @@ public:
       m_ent = ent;
    }
 
+   void resetFlushTimestamp () {
+      m_printQueueFlushTimestamp = 0.0f;
+   }
+
    int intValue (size_t arg) const {
       if (!hasArg (arg)) {
          return 0;
@@ -238,7 +242,7 @@ template <typename ...Args> inline void BotControl::msg (const char *fmt, Args &
       return;
    }
 
-   if (m_isFromConsole || strlen (result) > 56 || m_rapidOutput) {
+   if (m_isFromConsole || strnlen (result, StringBuffer::StaticBufferSize) > 96 || m_rapidOutput) {
       if (m_rapidOutput) {
          m_printQueue.emplaceLast (PrintQueueDestination::ClientConsole, result);
       }

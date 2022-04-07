@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -82,6 +82,7 @@ private:
    Array <edict_t *> m_activeGrenades; // holds currently active grenades on the map
    Array <edict_t *> m_intrestingEntities;  // holds currently intresting entities on the map
 
+   Deque <String> m_saveBotNames; // bots names that persist upon changelevel
    Deque <BotRequest> m_addRequests; // bot creation tab
    SmallArray <BotTask> m_filters; // task filters
    SmallArray <UniqueBot> m_bots; // all available bots

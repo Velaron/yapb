@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -29,11 +29,11 @@ public:
 
 public:
    StringRef name { "YaPB" };
-   StringRef year { __DATE__ + 7 };
+   StringRef year { &__DATE__[7] };
    StringRef author { "YaPB Project" };
    StringRef email { "yapb@jeefo.net" };
-   StringRef url { "https://yapb.ru/" };
-   StringRef download { "graph.yapb.ru" };
+   StringRef url { "https://yapb.jeefo.net/" };
+   StringRef download { "yapb.jeefo.net" };
    StringRef folder { "yapb" };
    StringRef logtag { "YB" };
    StringRef dtime { __DATE__ " " __TIME__ };

@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -9,12 +9,15 @@
 
 ConVar cv_graph_fixcamp ("yb_graph_fixcamp", "1", "Specifies whether bot should not 'fix' camp directions of camp waypoints when loading old PWF format.");
 ConVar cv_graph_url ("yb_graph_url", product.download.chars (), "Specifies the URL from bots will be able to download graph in case of missing local one. Set to empty, if no downloads needed.", false, 0.0f, 0.0f);
+ConVar cv_graph_auto_save_count ("yb_graph_auto_save_count", "15", "Every N graph nodes placed on map, the graph will be saved automatically (without checks).", true, 0.0f, kMaxNodes);
+ConVar cv_graph_draw_distance ("yb_graph_draw_distance", "400", "Maximum distance to draw graph nodes from editor viewport.", true, 64.0f, 512.0f);
 
 void BotGraph::reset () {
    // this function initialize the graph structures..
 
    m_loadAttempts = 0;
    m_editFlags = 0;
+   m_autoSaveCount = 0;
 
    m_learnVelocity = nullptr;
    m_learnPosition = nullptr;
@@ -386,6 +389,15 @@ int BotGraph::clearConnections (int index) {
    return numFixedLinks;
 }
 
+int BotGraph::getBspSize () {
+   MemFile file (strings.format ("maps/%s.bsp", game.getMapName ()));
+
+   if (file) {
+      return static_cast <int> (file.length ());
+   }
+   return 0;
+}
+
 void BotGraph::addPath (int addIndex, int pathIndex, float distance) {
    if (!exists (addIndex) || !exists (pathIndex)) {
       return;
@@ -437,7 +449,7 @@ int BotGraph::getFarest (const Vector &origin, float maxDistance) {
    maxDistance = cr::square (maxDistance);
 
    for (const auto &path : m_paths) {
-      float distance = (path.origin - origin).lengthSq ();
+      float distance = path.origin.distanceSq (origin);
 
       if (distance > maxDistance) {
          index = path.number;
@@ -458,7 +470,7 @@ int BotGraph::getNearestNoBuckets (const Vector &origin, float minDistance, int 
       if (flags != -1 && !(path.flags & flags)) {
          continue; // if flag not -1 and node has no this flag, skip node
       }
-      float distance = (path.origin - origin).lengthSq ();
+      float distance = path.origin.distanceSq (origin);
 
       if (distance < minDistance) {
          index = path.number;
@@ -491,7 +503,7 @@ int BotGraph::getNearest (const Vector &origin, float minDistance, int flags) {
       if (flags != -1 && !(m_paths[at].flags & flags)) {
          continue; // if flag not -1 and node has no this flag, skip node
       }
-      float distance = (m_paths[at].origin - origin).lengthSq ();
+      float distance = origin.distanceSq (m_paths[at].origin);
 
       if (distance < minDistanceSq) {
          index = at;
@@ -523,7 +535,7 @@ IntArray BotGraph::searchRadius (float radius, const Vector &origin, int maxCoun
          break;
       }
 
-      if ((m_paths[at].origin - origin).lengthSq () < radius) {
+      if (origin.distanceSq (m_paths[at].origin) < radius) {
          result.push (at);
       }
    }
@@ -548,7 +560,7 @@ void BotGraph::add (int type, const Vector &pos) {
    m_hasChanged = true;
 
    switch (type) {
-   case 5:
+   case NodeAddFlag::Camp:
       index = getEditorNeareset ();
 
       if (index != kInvalidNodeIndex) {
@@ -564,7 +576,7 @@ void BotGraph::add (int type, const Vector &pos) {
       }
       break;
 
-   case 6:
+   case NodeAddFlag::CampEnd:
       index = getEditorNeareset ();
 
       if (index != kInvalidNodeIndex) {
@@ -581,11 +593,11 @@ void BotGraph::add (int type, const Vector &pos) {
       }
       return;
 
-   case 9:
+   case NodeAddFlag::JumpStart:
       index = getEditorNeareset ();
 
       if (index != kInvalidNodeIndex && m_paths[index].number >= 0) {
-         float distance = (m_paths[index].origin - m_editor->v.origin).length ();
+         float distance = m_editor->v.origin.distance (m_paths[index].origin);
 
          if (distance < 50.0f) {
             addNewNode = false;
@@ -599,11 +611,11 @@ void BotGraph::add (int type, const Vector &pos) {
       }
       break;
 
-   case 10:
+   case NodeAddFlag::JumpEnd:
       index = getEditorNeareset ();
 
       if (index != kInvalidNodeIndex && m_paths[index].number >= 0) {
-         float distance = (m_paths[index].origin - m_editor->v.origin).length ();
+         float distance = m_editor->v.origin.distance (m_paths[index].origin);
 
          if (distance < 50.0f) {
             addNewNode = false;
@@ -627,7 +639,7 @@ void BotGraph::add (int type, const Vector &pos) {
       auto nearest = getEditorNeareset ();
 
       // do not allow to place waypoints "inside" waypoints, make at leat 10 units range
-      if (exists (nearest) && (m_paths[nearest].origin - newOrigin).lengthSq () < cr::square (10.0f)) {
+      if (exists (nearest) && newOrigin.distanceSq (m_paths[nearest].origin) < cr::square (10.0f)) {
          ctrl.msg ("Can't add node. It's way to near to %d node. Please move some units anywhere.", nearest);
          return;
       }
@@ -636,7 +648,7 @@ void BotGraph::add (int type, const Vector &pos) {
       if (m_paths.length () >= kMaxNodes) {
          return;
       }
-      m_paths.push (Path {});
+      m_paths.emplace ();
 
       index = length () - 1;
       path = &m_paths[index];
@@ -660,17 +672,27 @@ void BotGraph::add (int type, const Vector &pos) {
          link.flags = 0;
          link.velocity = nullptr;
       }
-      
 
+      // autosave nodes here and there
+      if (cv_graph_auto_save_count.bool_ () && ++m_autoSaveCount >= cv_graph_auto_save_count.int_ ()) {
+         if (saveGraphData ()) {
+            ctrl.msg ("Nodes has been autosaved...");
+         }
+         else {
+            ctrl.msg ("Can't autosave graph data...");
+         }
+         m_autoSaveCount = 0;
+      }
+      
       // store the last used node for the auto node code...
       m_lastNode = m_editor->v.origin;
    }
 
-   if (type == 9) {
+   if (type == NodeAddFlag::JumpStart) {
       m_lastJumpNode = index;
    }
-   else if (type == 10) {
-      float distance = (m_paths[m_lastJumpNode].origin - m_editor->v.origin).length ();
+   else if (type == NodeAddFlag::JumpEnd) {
+      float distance = m_paths[m_lastJumpNode].origin.distance (m_editor->v.origin);
       addPath (m_lastJumpNode, index, distance);
 
       for (auto &link : m_paths[m_lastJumpNode].links) {
@@ -701,32 +723,32 @@ void BotGraph::add (int type, const Vector &pos) {
    }
 
    switch (type) {
-   case 1:
+   case NodeAddFlag::TOnly:
       path->flags |= NodeFlag::Crossing;
       path->flags |= NodeFlag::TerroristOnly;
       break;
 
-   case 2:
+   case NodeAddFlag::CTOnly:
       path->flags |= NodeFlag::Crossing;
       path->flags |= NodeFlag::CTOnly;
       break;
 
-   case 3:
+   case NodeAddFlag::NoHostage:
       path->flags |= NodeFlag::NoHostage;
       break;
 
-   case 4:
+   case NodeAddFlag::Rescue:
       path->flags |= NodeFlag::Rescue;
       break;
 
-   case 5:
+   case NodeAddFlag::Camp:
       path->flags |= NodeFlag::Crossing;
       path->flags |= NodeFlag::Camp;
 
       path->start = m_editor->v.v_angle;
       break;
 
-   case 100:
+   case NodeAddFlag::Goal:
       path->flags |= NodeFlag::Goal;
       break;
    }
@@ -750,7 +772,7 @@ void BotGraph::add (int type, const Vector &pos) {
             game.testLine (newOrigin, calc.origin, TraceIgnore::Monsters, m_editor, &tr);
 
             if (cr::fequal (tr.flFraction, 1.0f) && cr::abs (newOrigin.x - calc.origin.x) < 64.0f && cr::abs (newOrigin.y - calc.origin.y) < 64.0f && cr::abs (newOrigin.z - calc.origin.z) < m_autoPathDistance) {
-               float distance = (calc.origin - newOrigin).length ();
+               float distance = newOrigin.distance (calc.origin);
 
                addPath (index, calc.number, distance);
                addPath (calc.number, index, distance);
@@ -759,7 +781,7 @@ void BotGraph::add (int type, const Vector &pos) {
          else {
             // check if the node is reachable from the new one
             if (isNodeReacheable (newOrigin, calc.origin) || isNodeReacheable (calc.origin, newOrigin)) {
-               float distance = (calc.origin - newOrigin).length ();
+               float distance = newOrigin.distance (calc.origin);
 
                if (distance < minDistance) {
                   destIndex = calc.number;
@@ -772,12 +794,12 @@ void BotGraph::add (int type, const Vector &pos) {
       if (exists (destIndex)) {
          // check if the node is reachable from the new one (one-way)
          if (isNodeReacheable (newOrigin, m_paths[destIndex].origin)) {
-            addPath (index, destIndex, (m_paths[destIndex].origin - newOrigin).length ());
+            addPath (index, destIndex, newOrigin.distance (m_paths[destIndex].origin));
          }
 
          // check if the new one is reachable from the node (other way)
          if (isNodeReacheable (m_paths[destIndex].origin, newOrigin)) {
-            addPath (destIndex, index, (m_paths[destIndex].origin - newOrigin).length ());
+            addPath (destIndex, index, newOrigin.distance (m_paths[destIndex].origin));
          }
       }
    }
@@ -790,12 +812,12 @@ void BotGraph::add (int type, const Vector &pos) {
 
          // check if the node is reachable from the new one (one-way)
          if (isNodeReacheable (newOrigin, calc.origin)) {
-            addPath (index, calc.number, (calc.origin - newOrigin).length ());
+            addPath (index, calc.number, calc.origin.distance (newOrigin));
          }
 
          // check if the new one is reachable from the node (other way)
          if (isNodeReacheable (calc.origin, newOrigin)) {
-            addPath (calc.number, index, (calc.origin - newOrigin).length ());
+            addPath (calc.number, index, calc.origin.distance (newOrigin));
          }
       }
       clearConnections (index);
@@ -975,7 +997,7 @@ void BotGraph::pathCreate (char dir) {
       return;
    }
 
-   float distance = (m_paths[nodeTo].origin - m_paths[nodeFrom].origin).length ();
+   float distance = m_paths[nodeFrom].origin.distance (m_paths[nodeTo].origin);
 
    if (dir == PathConnection::Outgoing) {
       addPath (nodeFrom, nodeTo, distance);
@@ -1133,19 +1155,20 @@ void BotGraph::calculatePathRadius (int index) {
    TraceResult tr {};
    bool wayBlocked = false;
 
-   for (float scanDistance = 32.0f; scanDistance < 128.0f; scanDistance += 16.0f) {
+   for (int32 scanDistance = 32; scanDistance < 128; scanDistance += 16) {
+      auto scan = static_cast <float> (scanDistance);
       start = path.origin;
 
-      direction = Vector (0.0f, 0.0f, 0.0f).forward () * scanDistance;
+      direction = Vector (0.0f, 0.0f, 0.0f).forward () * scan;
       direction = direction.angles ();
 
-      path.radius = scanDistance;
+      path.radius = scan;
 
-      for (float circleRadius = 0.0f; circleRadius < 360.0f; circleRadius += 20.0f) {
+      for (int32 circleRadius = 0; circleRadius < 360; circleRadius += 20) {
          const auto &forward = direction.forward ();
 
-         auto radiusStart = start + forward * scanDistance;
-         auto radiusEnd = start + forward * scanDistance;
+         auto radiusStart = start + forward * scan;
+         auto radiusEnd = start + forward * scan;
 
          game.testHull (radiusStart, radiusEnd, TraceIgnore::Monsters, head_hull, nullptr, &tr);
 
@@ -1164,8 +1187,8 @@ void BotGraph::calculatePathRadius (int index) {
             break;
          }
 
-         auto dropStart = start + forward * scanDistance;
-         auto dropEnd = dropStart - Vector (0.0f, 0.0f, scanDistance + 60.0f);
+         auto dropStart = start + forward * scan;
+         auto dropEnd = dropStart - Vector (0.0f, 0.0f, scan + 60.0f);
 
          game.testHull (dropStart, dropEnd, TraceIgnore::Monsters, head_hull, nullptr, &tr);
 
@@ -1175,8 +1198,8 @@ void BotGraph::calculatePathRadius (int index) {
 
             break;
          }
-         dropStart = start - forward * scanDistance;
-         dropEnd = dropStart - Vector (0.0f, 0.0f, scanDistance + 60.0f);
+         dropStart = start - forward * scan;
+         dropEnd = dropStart - Vector (0.0f, 0.0f, scan + 60.0f);
 
          game.testHull (dropStart, dropEnd, TraceIgnore::Monsters, head_hull, nullptr, &tr);
 
@@ -1195,7 +1218,7 @@ void BotGraph::calculatePathRadius (int index) {
 
             break;
          }
-         direction.y = cr::normalizeAngles (direction.y + circleRadius);
+         direction.y = cr::normalizeAngles (direction.y + static_cast <float> (circleRadius));
       }
 
       if (wayBlocked) {
@@ -1445,7 +1468,6 @@ void BotGraph::initNarrowPlaces () {
       if (accumWeight > 1) {
          path.flags |= NodeFlag::Narrow;
       }
-      accumWeight = 0;
    }
    m_narrowChecked = true;
 }
@@ -1612,6 +1634,9 @@ template <typename U> bool BotGraph::loadStorage (StringRef ext, StringRef name,
    bool isGraph = !!(options & StorageOption::Graph);
    MemFile file (strings.format ("%s%s/%s", getDataDirectory (true), isGraph ? "graph" : "train", filename)); // open the file
 
+   data.clear ();
+   data.shrink ();
+
    // resize data to fit the stuff
    auto resizeData = [&] (const size_t length) {
       data.resize (length); // for non-graph data the graph should be already loaded
@@ -1760,8 +1785,6 @@ bool BotGraph::loadGraphData () {
    ExtenHeader exten {};
    int32 outOptions = 0;
 
-   m_paths.clear ();
-
    // check if loaded
    bool dataLoaded = loadStorage <Path> ("graph", "Graph", StorageOption::Graph, StorageVersion::Graph, m_paths, &exten, &outOptions);
 
@@ -1786,13 +1809,12 @@ bool BotGraph::loadGraphData () {
       loadPractice ();
 
       if (exten.mapSize > 0) {
-         int mapSize = engfuncs.pfnGetFileSize (strings.format ("maps/%s.bsp", game.getMapName ()));
+         int mapSize = getBspSize ();
 
          if (mapSize != exten.mapSize) {
             ctrl.msg ("Warning: Graph data is probably not for this map. Please check bots behaviour.");
          }
       }
-      extern ConVar cv_debug_goal;
       cv_debug_goal.set (kInvalidNodeIndex);
 
       return true;
@@ -1829,7 +1851,7 @@ bool BotGraph::saveGraphData () {
 
    ExtenHeader exten {};
    strings.copy (exten.author, author.chars (), cr::bufsize (exten.author));
-   exten.mapSize = engfuncs.pfnGetFileSize (strings.format ("maps/%s.bsp", game.getMapName ()));
+   exten.mapSize = getBspSize ();
 
    // ensure narrow places saved into file
    m_narrowChecked = false;
@@ -1883,13 +1905,13 @@ const char *BotGraph::getOldFormatGraphName (bool isMemoryFile) {
 float BotGraph::calculateTravelTime (float maxSpeed, const Vector &src, const Vector &origin) {
    // this function returns 2D traveltime to a position
 
-   return (origin - src).length2d () / maxSpeed;
+   return origin.distance2d (src) / maxSpeed;
 }
 
 bool BotGraph::isNodeReacheable (const Vector &src, const Vector &destination) {
    TraceResult tr {};
 
-   float distance = (destination - src).length ();
+   float distance = destination.distance (src);
 
    // is the destination not close enough?
    if (distance > m_autoPathDistance) {
@@ -1945,7 +1967,7 @@ bool BotGraph::isNodeReacheable (const Vector &src, const Vector &destination) {
       game.testLine (check, down, TraceIgnore::Monsters, m_editor, &tr);
 
       float lastHeight = tr.flFraction * 1000.0f; // height from ground
-      distance = (destination - check).length (); // distance from goal
+      distance = destination.distance (check); // distance from goal
 
       while (distance > 10.0f) {
          // move 10 units closer to the goal...
@@ -1963,7 +1985,7 @@ bool BotGraph::isNodeReacheable (const Vector &src, const Vector &destination) {
             return false; // can't get there without jumping...
          }
          lastHeight = height;
-         distance = (destination - check).length (); // distance from goal
+         distance = destination.distance (check); // distance from goal
       }
       return true;
    }
@@ -2115,7 +2137,7 @@ void BotGraph::frame () {
    if (m_jumpLearnNode) {
       if (!m_endJumpPoint) {
          if (m_editor->v.button & IN_JUMP) {
-            add (9);
+            add (NodeAddFlag::JumpStart);
             
             m_timeJumpStarted = game.time ();
             m_endJumpPoint = true;
@@ -2126,7 +2148,7 @@ void BotGraph::frame () {
          }
       }
       else if (((m_editor->v.flags & FL_ONGROUND) || m_editor->v.movetype == MOVETYPE_FLY) && m_timeJumpStarted + 0.1f < game.time () && m_endJumpPoint) {
-         add (10);
+         add (NodeAddFlag::JumpEnd);
 
          m_jumpLearnNode = false;
          m_endJumpPoint = false;
@@ -2136,13 +2158,13 @@ void BotGraph::frame () {
    // check if it's a auto-add-node mode enabled
    if (hasEditFlag (GraphEdit::Auto) && (m_editor->v.flags & (FL_ONGROUND | FL_PARTIALGROUND))) {
       // find the distance from the last used node
-      float distance = (m_lastNode - m_editor->v.origin).lengthSq ();
+      float distance = m_lastNode.distanceSq (m_editor->v.origin);
 
       if (distance > cr::square (128.0f)) {
          // check that no other reachable nodes are nearby...
          for (const auto &path : m_paths) {
             if (isNodeReacheable (m_editor->v.origin, path.origin)) {
-               distance = (path.origin - m_editor->v.origin).lengthSq ();
+               distance = path.origin.distanceSq (m_editor->v.origin);
 
                if (distance < nearestDistance) {
                   nearestDistance = distance;
@@ -2152,7 +2174,7 @@ void BotGraph::frame () {
 
          // make sure nearest node is far enough away...
          if (nearestDistance >= cr::square (128.0f)) {
-            add (GraphAdd::Normal); // place a node here
+            add (NodeAddFlag::Normal); // place a node here
          }
       }
    }
@@ -2163,17 +2185,17 @@ void BotGraph::frame () {
 
    // now iterate through all nodes in a map, and draw required ones
    for (auto &path : m_paths) {
-      float distance = (path.origin - m_editor->v.origin).length ();
+      float distance = path.origin.distance (m_editor->v.origin);
 
       // check if node is whitin a distance, and is visible
-      if (distance < 512.0f && ((util.isVisible (path.origin, m_editor) && util.isInViewCone (path.origin, m_editor)) || !util.isAlive (m_editor) || distance < 128.0f)) {
+      if (distance < cv_graph_draw_distance.float_ () && ((util.isVisible (path.origin, m_editor) && util.isInViewCone (path.origin, m_editor)) || !util.isAlive (m_editor) || distance < 64.0f)) {
          // check the distance
          if (distance < nearestDistance) {
             nearestIndex = path.number;
             nearestDistance = distance;
          }
 
-         if (path.display + 0.8f < game.time ()) {
+         if (path.display + 1.0f < game.time ()) {
             float nodeHeight = 0.0f;
 
             // check the node height
@@ -2270,8 +2292,8 @@ void BotGraph::frame () {
    }
 
    // draw a paths, camplines and danger directions for nearest node
-   if (nearestDistance <= 56.0f && m_pathDisplayTime <= game.time ()) {
-      m_pathDisplayTime = game.time () + 1.0f;
+   if (nearestDistance <= 56.0f && m_pathDisplayTime < game.time ()) {
+      m_pathDisplayTime = game.time () + 0.96f;
 
       // create path pointer for faster access
       auto &path = m_paths[nearestIndex];
@@ -2313,7 +2335,7 @@ void BotGraph::frame () {
       // now look for oneway incoming connections
       for (const auto &connected : m_paths) {
          if (isConnected (connected.number, path.number) && !isConnected (path.number, connected.number)) {
-            game.drawLine (m_editor, path.origin, connected.origin, 5, 0, { 0, 192, 96 }, 200, 0, 10);
+            game.drawLine (m_editor, path.origin, connected.origin, 5, 0, { 255, 255, 255 }, 200, 0, 10);
          }
       }
 
@@ -2324,7 +2346,7 @@ void BotGraph::frame () {
       // if radius is nonzero, draw a full circle
       if (path.radius > 0.0f) {
          float sqr = cr::sqrtf (cr::square (path.radius) * 0.5f);
-
+         
          game.drawLine (m_editor, origin + Vector (path.radius, 0.0f, 0.0f), origin + Vector (sqr, -sqr, 0.0f), 5, 0, radiusColor, 200, 0, 10);
          game.drawLine (m_editor, origin + Vector (sqr, -sqr, 0.0f), origin + Vector (0.0f, -path.radius, 0.0f), 5, 0, radiusColor, 200, 0, 10);
 
@@ -2352,9 +2374,38 @@ void BotGraph::frame () {
             game.drawLine (m_editor, path.origin, m_paths[dangerIndex].origin, 15, 0, { 255, 0, 0 }, 200, 0, 10, DrawLine::Arrow); // draw a red arrow to this index's danger point
          }
       }
+      static int channel = 0;
 
-      auto getFlagsAsStr = [&] (int index) -> StringRef {
-         const auto &path = m_paths[index];
+      auto sendHudMessage = [] (Color color, float x, float y, edict_t *to, StringRef text) {
+         MessageWriter (MSG_ONE_UNRELIABLE, SVC_TEMPENTITY, nullptr, to)
+            .writeByte (TE_TEXTMESSAGE)
+            .writeByte (channel++ & 0xff) // channel
+            .writeShort (MessageWriter::fs16 (x, 13.0f)) // x
+            .writeShort (MessageWriter::fs16 (y, 13.0f)) // y
+            .writeByte (0) // effect
+            .writeByte (color.red) // r1
+            .writeByte (color.green) // g1
+            .writeByte (color.blue) // b1
+            .writeByte (1) // a1
+            .writeByte (color.red) // r2
+            .writeByte (color.green) // g2
+            .writeByte (color.blue) // b2
+            .writeByte (1) // a2
+            .writeShort (0) // fadeintime
+            .writeShort (0) // fadeouttime
+            .writeShort (MessageWriter::fu16 (1.0f, 8.0f)) // holdtime
+            .writeString (text.chars ());
+
+         if (channel > 3) {
+            channel = 0;
+         }
+      };
+
+      // very helpful stuff..
+      auto getNodeData = [&] (StringRef type, int node) -> String {
+         String message, flags;
+
+         const auto &path = m_paths[node];
          bool jumpPoint = false;
 
          // iterate through connections and find, if it's a jump path
@@ -2365,80 +2416,49 @@ void BotGraph::frame () {
                jumpPoint = true;
             }
          }
+         flags.assignf ("%s%s%s%s%s%s%s%s%s%s%s%s", (path.flags & NodeFlag::Lift) ? " LIFT" : "", (path.flags & NodeFlag::Crouch) ? " CROUCH" : "", (path.flags & NodeFlag::Camp) ? " CAMP" : "", (path.flags & NodeFlag::TerroristOnly) ? " TERRORIST" : "", (path.flags & NodeFlag::CTOnly) ? " CT" : "", (path.flags & NodeFlag::Sniper) ? " SNIPER" : "", (path.flags & NodeFlag::Goal) ? " GOAL" : "", (path.flags & NodeFlag::Ladder) ? " LADDER" : "", (path.flags & NodeFlag::Rescue) ? " RESCUE" : "", (path.flags & NodeFlag::DoubleJump) ? " JUMPHELP" : "", (path.flags & NodeFlag::NoHostage) ? " NOHOSTAGE" : "", jumpPoint ? " JUMP" : "");
 
-         static String buffer;
-         buffer.assignf ("%s%s%s%s%s%s%s%s%s%s%s%s", (path.flags & NodeFlag::Lift) ? " LIFT" : "", (path.flags & NodeFlag::Crouch) ? " CROUCH" : "", (path.flags & NodeFlag::Camp) ? " CAMP" : "", (path.flags & NodeFlag::TerroristOnly) ? " TERRORIST" : "", (path.flags & NodeFlag::CTOnly) ? " CT" : "", (path.flags & NodeFlag::Sniper) ? " SNIPER" : "", (path.flags & NodeFlag::Goal) ? " GOAL" : "", (path.flags & NodeFlag::Ladder) ? " LADDER" : "", (path.flags & NodeFlag::Rescue) ? " RESCUE" : "", (path.flags & NodeFlag::DoubleJump) ? " JUMPHELP" : "", (path.flags & NodeFlag::NoHostage) ? " NOHOSTAGE" : "", jumpPoint ? " JUMP" : "");
-
-         if (buffer.empty ()) {
-            buffer.assign ("(none)");
+         if (flags.empty ()) {
+            flags.assign ("(none)");
          }
-         // return the message buffer
-         return buffer;
-      };
 
-      auto pathOriginStr = [&] (int index) -> StringRef {
-         const auto &path = m_paths[index];
-
-         static String buffer;
-         buffer.assignf ("(%.1f, %.1f, %.1f)", path.origin.x, path.origin.y, path.origin.z);
-
-         return buffer;
+         // show the information about that point
+         message.assignf ("      %s node:\n"
+                          "       Node %d of %d, Radius: %.1f, Light: %.1f\n"
+                          "       Flags: %s\n"
+                          "       Origin: (%.1f, %.1f, %.1f)\n", type, node, m_paths.length () - 1, path.radius, path.light, flags, path.origin.x, path.origin.y, path.origin.z);
+         return message;
       };
 
       // display some information
-      String graphMessage;
+      sendHudMessage ({ 255, 255, 255 }, 0.0f, 0.025f, m_editor, getNodeData ("Current", nearestIndex));
 
-      // show the information about that point
-      graphMessage.assignf ("\n\n\n\n    Graph Information:\n\n"
-                              "      Node %d of %d, Radius: %.1f, Light: %.1f\n"
-                              "      Flags: %s\n"
-                              "      Origin: %s\n\n", nearestIndex, m_paths.length () - 1, path.radius, path.light, getFlagsAsStr (nearestIndex), pathOriginStr (nearestIndex));
+      // check if we need to show the cached point index
+      if (m_cacheNodeIndex != kInvalidNodeIndex) {
+         sendHudMessage ({ 255, 255, 255 }, 0.28f, 0.16f, m_editor, getNodeData ("Cached", m_cacheNodeIndex));
+      }
+
+      // check if we need to show the facing point index
+      if (m_facingAtIndex != kInvalidNodeIndex) {
+         sendHudMessage ({ 255, 255, 255 }, 0.28f, 0.025f, m_editor, getNodeData ("Facing", m_facingAtIndex));
+      }
+      String timeMessage = strings.format ("      Map: %s, Time: %s\n", game.getMapName (), util.getCurrentDateTime ());
 
       // if node is not changed display experience also
       if (!m_hasChanged) {
          int dangerIndexCT = getDangerIndex (Team::CT, nearestIndex, nearestIndex);
          int dangerIndexT = getDangerIndex (Team::Terrorist, nearestIndex, nearestIndex);
 
-         graphMessage.appendf ("      Experience Info:\n"
-                                       "      CT: %d / %d dmg\n"
-                                       "      T: %d / %d dmg\n", dangerIndexCT, dangerIndexCT != kInvalidNodeIndex ? getDangerDamage (Team::CT, nearestIndex, dangerIndexCT) : 0, dangerIndexT, dangerIndexT != kInvalidNodeIndex ? getDangerDamage (Team::Terrorist, nearestIndex, dangerIndexT) : 0);
-      }
+         String practice;
+         practice.assignf ("      Node practice data (index / damage):\n"
+                          "       CT: %d / %d\n"
+                          "       T:  %d / %d\n\n", dangerIndexCT, dangerIndexCT != kInvalidNodeIndex ? getDangerDamage (Team::CT, nearestIndex, dangerIndexCT) : 0, dangerIndexT, dangerIndexT != kInvalidNodeIndex ? getDangerDamage (Team::Terrorist, nearestIndex, dangerIndexT) : 0);
 
-      // check if we need to show the cached point index
-      if (m_cacheNodeIndex != kInvalidNodeIndex) {
-         graphMessage.appendf ("\n    Cached Node Information:\n\n"
-                                       "      Node %d of %d, Radius: %.1f\n"
-                                       "      Flags: %s\n"
-                                       "      Origin: %s\n", m_cacheNodeIndex, m_paths.length () - 1, m_paths[m_cacheNodeIndex].radius, getFlagsAsStr (m_cacheNodeIndex), pathOriginStr (m_cacheNodeIndex));
+         sendHudMessage ({ 255, 255, 255 }, 0.0f, 0.16f, m_editor, practice + timeMessage);
       }
-
-      // check if we need to show the facing point index
-      if (m_facingAtIndex != kInvalidNodeIndex) {
-         graphMessage.appendf ("\n    Facing Node Information:\n\n"
-                                       "      Node %d of %d, Radius: %.1f\n"
-                                       "      Flags: %s\n"
-                                       "      Origin: %s\n", m_facingAtIndex, m_paths.length () - 1, m_paths[m_facingAtIndex].radius, getFlagsAsStr (m_facingAtIndex), pathOriginStr (m_facingAtIndex));
+      else {
+         sendHudMessage ({ 255, 255, 255 }, 0.0f, 0.16f, m_editor, timeMessage);
       }
-
-      // draw entire message
-      MessageWriter (MSG_ONE_UNRELIABLE, SVC_TEMPENTITY, nullptr, m_editor)
-         .writeByte (TE_TEXTMESSAGE)
-         .writeByte (4) // channel
-         .writeShort (MessageWriter::fs16 (0.0f, 13.0f)) // x
-         .writeShort (MessageWriter::fs16 (0.0f, 13.0f)) // y
-         .writeByte (0) // effect
-         .writeByte (255) // r1
-         .writeByte (255) // g1
-         .writeByte (255) // b1
-         .writeByte (1) // a1
-         .writeByte (255) // r2
-         .writeByte (255) // g2
-         .writeByte (255) // b2
-         .writeByte (255) // a2
-         .writeShort (0) // fadeintime
-         .writeShort (0) // fadeouttime
-         .writeShort (MessageWriter::fu16 (1.1f, 8.0f)) // holdtime
-         .writeString (graphMessage.chars ());
    }
 }
 
@@ -2682,7 +2702,7 @@ void BotGraph::addBasic () {
       Vector up, down, front, back;
 
       const Vector &diff = ((ladderLeft - ladderRight) ^ Vector (0.0f, 0.0f, 0.0f)).normalize () * 15.0f;
-      front = back = game.getEntityWorldOrigin (ent);
+      front = back = game.getEntityOrigin (ent);
 
       front = front + diff; // front
       back = back - diff; // back
@@ -2705,7 +2725,7 @@ void BotGraph::addBasic () {
 
       do {
          if (getNearestNoBuckets (point, 50.0f) == kInvalidNodeIndex) {
-            add (3, point);
+            add (NodeAddFlag::NoHostage, point);
          }
          point.z += 160;
       } while (point.z < down.z - 40.0f);
@@ -2713,7 +2733,7 @@ void BotGraph::addBasic () {
       point = down + Vector (0.0f, 0.0f, 38.0f);
 
       if (getNearestNoBuckets (point, 50.0f) == kInvalidNodeIndex) {
-         add (3, point);
+         add (NodeAddFlag::NoHostage, point);
       }
       m_isOnLadder = false;
 
@@ -2722,7 +2742,7 @@ void BotGraph::addBasic () {
 
    auto autoCreateForEntity = [] (int type, const char *entity) {
       game.searchEntities ("classname", entity, [&] (edict_t *ent) {
-         const Vector &pos = game.getEntityWorldOrigin (ent);
+         const Vector &pos = game.getEntityOrigin (ent);
 
          if (graph.getNearestNoBuckets (pos, 50.0f) == kInvalidNodeIndex) {
             graph.add (type, pos);
@@ -2731,30 +2751,30 @@ void BotGraph::addBasic () {
       });
    };
 
-   autoCreateForEntity (0, "info_player_deathmatch"); // then terrortist spawnpoints
-   autoCreateForEntity (0, "info_player_start"); // then add ct spawnpoints
-   autoCreateForEntity (0, "info_vip_start"); // then vip spawnpoint
-   autoCreateForEntity (0, "armoury_entity"); // weapons on the map ?
+   autoCreateForEntity (NodeAddFlag::Normal, "info_player_deathmatch"); // then terrortist spawnpoints
+   autoCreateForEntity (NodeAddFlag::Normal, "info_player_start"); // then add ct spawnpoints
+   autoCreateForEntity (NodeAddFlag::Normal, "info_vip_start"); // then vip spawnpoint
+   autoCreateForEntity (NodeAddFlag::Normal, "armoury_entity"); // weapons on the map ?
 
-   autoCreateForEntity (4, "func_hostage_rescue"); // hostage rescue zone
-   autoCreateForEntity (4, "info_hostage_rescue"); // hostage rescue zone (same as above)
+   autoCreateForEntity (NodeAddFlag::Rescue, "func_hostage_rescue"); // hostage rescue zone
+   autoCreateForEntity (NodeAddFlag::Rescue, "info_hostage_rescue"); // hostage rescue zone (same as above)
 
-   autoCreateForEntity (100, "func_bomb_target"); // bombspot zone
-   autoCreateForEntity (100, "info_bomb_target"); // bombspot zone (same as above)
-   autoCreateForEntity (100, "hostage_entity"); // hostage entities
-   autoCreateForEntity (100, "func_vip_safetyzone"); // vip rescue (safety) zone
-   autoCreateForEntity (100, "func_escapezone"); // terrorist escape zone
+   autoCreateForEntity (NodeAddFlag::Goal, "func_bomb_target"); // bombspot zone
+   autoCreateForEntity (NodeAddFlag::Goal, "info_bomb_target"); // bombspot zone (same as above)
+   autoCreateForEntity (NodeAddFlag::Goal, "hostage_entity"); // hostage entities
+   autoCreateForEntity (NodeAddFlag::Goal, "monster_scientist"); // hostage entities (same as above)
+   autoCreateForEntity (NodeAddFlag::Goal, "func_vip_safetyzone"); // vip rescue (safety) zone
+   autoCreateForEntity (NodeAddFlag::Goal, "func_escapezone"); // terrorist escape zone
 }
 
 void BotGraph::eraseFromDisk () {
    // this function removes graph file from the hard disk
 
    StringArray forErase;
+   bots.kickEveryone (true);
 
    auto map = game.getMapName ();
    auto data = getDataDirectory ();
-
-   bots.kickEveryone (true);
 
    // if we're delete graph, delete all corresponding to it files
    forErase.push (strings.format ("%spwf/%s.pwf", data, map)); // graph itself
@@ -2812,7 +2832,7 @@ void BotGraph::setBombOrigin (bool reset, const Vector &pos) {
    
    game.searchEntities ("classname", "grenade", [&] (edict_t *ent) {
       if (util.isModel (ent, bombModel)) {
-         m_bombOrigin = game.getEntityWorldOrigin (ent);
+         m_bombOrigin = game.getEntityOrigin (ent);
          wasFound = true;
 
          return EntitySearchResult::Break;

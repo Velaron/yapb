@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -54,7 +54,7 @@ CR_DECLARE_SCOPED_ENUM (MapFlags,
    Demolition = cr::bit (2),
    Escape = cr::bit (3),
    KnifeArena = cr::bit (4),
-   Fun = cr::bit (5),
+   FightYard = cr::bit (5),
    HasDoors = cr::bit (10), // additional flags
    HasButtons = cr::bit (11) // map has buttons
 )
@@ -131,7 +131,8 @@ private:
    int m_gameFlags {};
    int m_mapFlags {};
 
-   float m_slowFrame; // per second updated frame
+   float m_oneSecondFrame; // per second updated
+   float m_halfSecondFrame; // per half second update
 
 public:
    Game ();
@@ -151,7 +152,7 @@ public:
    void testLine (const Vector &start, const Vector &end, int ignoreFlags, edict_t *ignoreEntity, TraceResult *ptr);
 
    // trace line with channel, but allows us to store last traceline bot has fired, saving us some cpu cycles
-   bool testLineChannel (TraceChannel channel, const Vector &start, const Vector &end, int ignoreFlags, edict_t *ignoreEntity, TraceResult *ptr);
+   bool testLineChannel (TraceChannel channel, const Vector &start, const Vector &end, int ignoreFlags, edict_t *ignoreEntity, TraceResult &result);
 
    // test line
    void testHull (const Vector &start, const Vector &end, int ignoreFlags, int hullNumber, edict_t *ignoreEntity, TraceResult *ptr);
@@ -169,7 +170,7 @@ public:
    const char *getMapName ();
 
    // get the "any" entity origin
-   Vector getEntityWorldOrigin (edict_t *ent);
+   Vector getEntityOrigin (edict_t *ent);
 
    // registers a server command
    void registerEngineCommand (const char *command, void func ());
@@ -441,7 +442,7 @@ public:
    }
 
    void set (const char *val) {
-      engfuncs.pfnCvar_DirectSet (ptr, const_cast <char *> (val));
+      engfuncs.pfnCvar_DirectSet (ptr, val);
    }
 };
 
@@ -573,7 +574,7 @@ public:
 
 public:
    template <typename T> T read () {
-      T result;
+      T result {};
       auto size = sizeof (T);
 
       if (m_cursor + size > m_buffer.length ()) {
@@ -634,19 +635,16 @@ public:
    }
 };
 
-// for android
-#if defined (CR_ANDROID) && defined(CR_ARCH_ARM)
-   extern "C" void player (entvars_t *);
-#endif
-
 class EntityLinkage : public Singleton <EntityLinkage> {
 private:
 #if defined (CR_WINDOWS)
 #  define DLSYM_FUNCTION GetProcAddress
+#  define DLCLOSE_FUNCTION FreeLibrary
 #  define DLSYM_RETURN FARPROC
 #  define DLSYM_HANDLE HMODULE
 #else
 #  define DLSYM_FUNCTION dlsym
+#  define DLCLOSE_FUNCTION dlclose
 #  define DLSYM_RETURN SharedLibrary::Handle
 #  define DLSYM_HANDLE SharedLibrary::Handle
 #endif
@@ -655,6 +653,7 @@ private:
    bool m_paused { false };
 
    Detour <decltype (DLSYM_FUNCTION)> m_dlsym;
+   Detour <decltype (DLCLOSE_FUNCTION)> m_dlclose;
    HashMap <StringRef, DLSYM_RETURN> m_exports;
 
    SharedLibrary m_self;
@@ -666,14 +665,17 @@ public:
    void initialize ();
    DLSYM_RETURN lookup (SharedLibrary::Handle module, const char *function);
 
-public:
-   void callPlayerFunction (edict_t *ent) {
-#if defined (CR_ANDROID) && defined (CR_ARCH_ARM)
-      player (&ent->v);
-#else
-      reinterpret_cast <EntityFunction> (lookup (Game::instance ().lib ().handle (), "player")) (&ent->v);
-#endif
+   int close (DLSYM_HANDLE module) {
+      if (m_self.handle () == module) {
+         disable ();
+
+         return  m_dlclose (module);
+      }
+      return m_dlclose (module);
    }
+
+public:
+   void callPlayerFunction (edict_t *ent);
 
 public:
    void enable () {
@@ -699,16 +701,20 @@ public:
    }
 
 public:
-   static DLSYM_RETURN CR_STDCALL replacement (SharedLibrary::Handle module, const char *function) {
+   static DLSYM_RETURN CR_STDCALL lookupHandler (SharedLibrary::Handle module, const char *function) {
       return EntityLinkage::instance ().lookup (module, function);
    }
 
+   static int CR_STDCALL closeHandler (DLSYM_HANDLE module) {
+      return EntityLinkage::instance ().close (module);
+   }
+
 public:
-   void clearExportTable () {
+   void flush () {
       m_exports.clear ();
    }
 
-   bool isWorkaroundNeeded () {
+   bool needsBypass () const {
       return !plat.win && !Game::instance ().isDedicated ();
    }
 };

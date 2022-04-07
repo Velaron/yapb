@@ -75,86 +75,86 @@
     <ClInclude Include="..\ext\hlsdk\util.h">
       <Filter>inc\ext\hlsdk</Filter>
     </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-array.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-basic.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-binheap.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-color.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-complete.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-files.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-http.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-lambda.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-library.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-logger.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-math.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-movable.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-platform.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-random.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-string.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-twin.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-ulz.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-uniqueptr.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-vector.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-detour.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-hashmap.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-deque.h">
-      <Filter>inc\ext\crlib</Filter>
-    </ClInclude>
     <ClInclude Include="..\inc\module.h">
       <Filter>inc</Filter>
     </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-memory.h">
+    <ClInclude Include="..\ext\crlib\crlib\array.h">
       <Filter>inc\ext\crlib</Filter>
     </ClInclude>
-    <ClInclude Include="..\ext\crlib\cr-override.h">
+    <ClInclude Include="..\ext\crlib\crlib\basic.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\binheap.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\color.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\crlib.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\deque.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\detour.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\files.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\hashmap.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\http.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\lambda.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\library.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\logger.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\math.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\memory.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\movable.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\override.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\platform.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\random.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\string.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\twin.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\ulz.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\uniqueptr.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\vector.h">
+      <Filter>inc\ext\crlib</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\crlib\crlib\simd.h">
       <Filter>inc\ext\crlib</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\android.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\botlib.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -192,6 +192,9 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\src\module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\entities.cpp">
       <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>

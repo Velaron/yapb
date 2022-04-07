@@ -211,7 +211,7 @@ typedef struct enginefuncs_s {
    void (*pfnDeltaUnsetFieldByIndex) (struct delta_s *pFields, int fieldNumber);
    void (*pfnSetGroupMask) (int mask, int op);
    int (*pfnCreateInstancedBaseline) (int classname, struct entity_state_s *baseline);
-   void (*pfnCvar_DirectSet) (struct cvar_t *var, char *value);
+   void (*pfnCvar_DirectSet) (struct cvar_t *var, const char *value);
    void (*pfnForceUnmodified) (FORCE_TYPE type, float *mins, float *maxs, const char *szFilename);
    void (*pfnGetPlayerStats) (const edict_t *client, int *ping, int *packet_loss);
    void (*pfnAddServerCommand) (const char *cmd_name, void (*function) ());
@@ -238,9 +238,7 @@ typedef struct enginefuncs_s {
    void (*pfnQueryClientCVarValue) (const edict_t *player, const char *cvarName);
    void (*pfnQueryClientCVarValue2) (const edict_t *player, const char *cvarName, int requestID);
    int (*pfnCheckParm) (const char *pchCmdLineToken, char **ppnext);
-#ifdef EIFACE_2019
-   edict_t *(*pfnPEntityOfEntIndexAllEntities) (int iEntIndex);
-#endif
+   // edict_t *(*pfnPEntityOfEntIndexAllEntities) (int iEntIndex);
 } enginefuncs_t;
 
 // Passed to pfnKeyValue

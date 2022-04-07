@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -239,6 +239,11 @@ CR_EXPORT int GetEntityAPI (gamefuncs_t *table, int) {
          }
       }
 
+      // clear the graph editor upon disconnect
+      if (ent == graph.getEditor ()) {
+         graph.setEditor (nullptr);
+      }
+
       if (game.is (GameFlags::Metamod)) {
          RETURN_META (MRES_IGNORED);
       }
@@ -339,10 +344,6 @@ CR_EXPORT int GetEntityAPI (gamefuncs_t *table, int) {
       // send message on new map
       util.setNeedForWelcome (false);
 
-      // xash is not kicking fakeclients on changelevel
-      if (game.is (GameFlags::Xash3D)) {
-         bots.kickEveryone (true, false);
-      }
       graph.reset ();
 
       // clear all the bots
@@ -354,7 +355,7 @@ CR_EXPORT int GetEntityAPI (gamefuncs_t *table, int) {
       dllapi.pfnServerDeactivate ();
 
       // refill export table
-      ents.clearExportTable ();
+      ents.flush ();
    };
 
    table->pfnStartFrame = [] () {
@@ -407,32 +408,30 @@ CR_EXPORT int GetEntityAPI (gamefuncs_t *table, int) {
       
       // if we're handle pings for bots and clients, clear IN_SCORE button so SV_ShouldUpdatePing engine function return false, and SV_EmitPings will not overwrite our results
       if (game.is (GameFlags::HasFakePings) && cv_show_latency.int_ () == 2) {
-         if (cmd->buttons & IN_SCORE) {
+         if (!util.isFakeClient (ent) && (ent->v.oldbuttons | ent->v.button | cmd->buttons) & IN_SCORE) {
             cmd->buttons &= ~IN_SCORE;
-
-            // send our version of pings
-            util.sendPings (ent);
+            util.emitPings (ent);
          }
       }
       
       if (game.is (GameFlags::Metamod)) {
          RETURN_META (MRES_IGNORED);
       }
-      dllapi.pfnCmdStart (player, cmd, random_seed);
+      dllapi.pfnCmdStart (ent, cmd, random_seed);
    };
 
-   table->pfnPM_Move = [] (playermove_t *playerMove, int server) {
+   table->pfnPM_Move = [] (playermove_t *pm, int server) {
       // this is the player movement code clients run to predict things when the server can't update
       // them often enough (or doesn't want to). The server runs exactly the same function for
       // moving players. There is normally no distinction between them, else client-side prediction
       // wouldn't work properly (and it doesn't work that well, already...)
 
-      illum.setWorldModel (playerMove->physents[0].model);
+      illum.setWorldModel (pm->physents[0].model);
 
       if (game.is (GameFlags::Metamod)) {
          RETURN_META (MRES_IGNORED);
       }
-      dllapi.pfnPM_Move (playerMove, server);
+      dllapi.pfnPM_Move (pm, server);
    };
    return HLTrue;
 }
@@ -500,7 +499,7 @@ CR_LINKAGE_C int GetEngineFunctions (enginefuncs_t *table, int *) {
       plat.bzero (table, sizeof (enginefuncs_t));
    }
 
-   if (ents.isWorkaroundNeeded () && !game.is (GameFlags::Metamod)) {
+   if (ents.needsBypass () && !game.is (GameFlags::Metamod)) {
       table->pfnCreateNamedEntity = [] (int classname) -> edict_t * {
 
          if (ents.isPaused ()) {
@@ -510,25 +509,6 @@ CR_LINKAGE_C int GetEngineFunctions (enginefuncs_t *table, int *) {
          return engfuncs.pfnCreateNamedEntity (classname);
       };
    }
-
-   table->pfnChangeLevel = [] (char *s1, char *s2) {
-      // the purpose of this function is to ask the engine to shutdown the server and restart a
-      // new one running the map whose name is s1. It is used ONLY IN SINGLE PLAYER MODE and is
-      // transparent to the user, because it saves the player state and equipment and restores it
-      // back in the new level. The "changelevel trigger point" in the old level is linked to the
-      // new level's spawn point using the s2 string, which is formatted as follows: "trigger_name
-      // to spawnpoint_name", without spaces (for example, "tr_1atotr_2lm" would tell the engine
-      // the player has reached the trigger point "tr_1a" and has to spawn in the next level on the
-      // spawn point named "tr_2lm".
-
-      // save collected experience on map change
-      graph.savePractice ();
-
-      if (game.is (GameFlags::Metamod)) {
-         RETURN_META (MRES_IGNORED);
-      }
-      engfuncs.pfnChangeLevel (s1, s2);
-   };
 
    table->pfnLightStyle = [] (int style, char *val) {
       // ths function update lightstyle for the bots
@@ -805,30 +785,31 @@ CR_EXPORT int GetNewDLLFunctions (newgamefuncs_t *table, int *interfaceVersion) 
    plat.bzero (table, sizeof (newgamefuncs_t));
 
    if (!(game.is (GameFlags::Metamod))) {
-      auto api_GetEntityAPI = game.lib ().resolve <decltype (&GetNewDLLFunctions)> (__FUNCTION__);
+      auto api_GetNewDLLFunctions = game.lib ().resolve <decltype (&GetNewDLLFunctions)> (__FUNCTION__);
 
       // pass other DLLs engine callbacks to function table...
-      if (!api_GetEntityAPI || api_GetEntityAPI (&newapi, interfaceVersion) == 0) {
+      if (!api_GetNewDLLFunctions || api_GetNewDLLFunctions (&newapi, interfaceVersion) == 0) {
          logger.error ("Could not resolve symbol \"%s\" in the game dll.", __FUNCTION__);
       }
       dllfuncs.newapi_table = &newapi;
-
       memcpy (table, &newapi, sizeof (newgamefuncs_t));
    }
 
-   table->pfnOnFreeEntPrivateData = [] (edict_t *ent) {
-      for (auto &bot : bots) {
-         if (bot->m_enemy == ent) {
-            bot->m_enemy = nullptr;
-            bot->m_lastEnemy = nullptr;
+   if (!game.is (GameFlags::Legacy)) {
+      table->pfnOnFreeEntPrivateData = [] (edict_t *ent) {
+         for (auto &bot : bots) {
+            if (bot->m_enemy == ent) {
+               bot->m_enemy = nullptr;
+               bot->m_lastEnemy = nullptr;
+            }
          }
-      }
 
-      if (game.is (GameFlags::Metamod)) {
-         RETURN_META (MRES_IGNORED);
-      }
-      newapi.pfnOnFreeEntPrivateData (ent);
-   };
+         if (game.is (GameFlags::Metamod)) {
+            RETURN_META (MRES_IGNORED);
+         }
+         newapi.pfnOnFreeEntPrivateData (ent);
+      };
+   }
    return HLTrue;
 }
 
@@ -942,11 +923,11 @@ CR_EXPORT void Meta_Init () {
 #  elif defined(CR_CXX_CLANG) || defined(CR_CXX_GCC) || defined(CR_ARCH_X64)
 #     define DLL_GIVEFNPTRSTODLL CR_EXPORT void CR_STDCALL
 #  endif
-#elif defined(CR_LINUX) || defined (CR_OSX) || defined (CR_ANDROID)
+#else
 #  define DLL_GIVEFNPTRSTODLL CR_EXPORT void
 #endif
 
-DLL_GIVEFNPTRSTODLL GiveFnptrsToDll (enginefuncs_t *functionTable, globalvars_t *glob) {
+DLL_GIVEFNPTRSTODLL GiveFnptrsToDll (enginefuncs_t *table, globalvars_t *glob) {
    // this is the very first function that is called in the game DLL by the game. Its purpose
    // is to set the functions interfacing up, by exchanging the functionTable function list
    // along with a pointer to the engine's global variables structure pGlobals, with the game
@@ -959,7 +940,7 @@ DLL_GIVEFNPTRSTODLL GiveFnptrsToDll (enginefuncs_t *functionTable, globalvars_t 
    // initialization stuff will be done later, when we'll be certain to have a multilayer game.
 
    // get the engine functions from the game...
-   memcpy (&engfuncs, functionTable, sizeof (enginefuncs_t));
+   memcpy (&engfuncs, table, sizeof (enginefuncs_t));
    globals = glob;
 
    if (game.postload ()) {
@@ -970,13 +951,56 @@ DLL_GIVEFNPTRSTODLL GiveFnptrsToDll (enginefuncs_t *functionTable, globalvars_t 
    if (!api_GiveFnptrsToDll) {
       logger.fatal ("Could not resolve symbol \"%s\" in the game dll.", __FUNCTION__);
    }
-   GetEngineFunctions (functionTable, nullptr);
+   GetEngineFunctions (table, nullptr);
 
-   // initialize dynamic linkents
-   ents.initialize ();
+   // initialize dynamic linkents (no memory hacking with xash3d)
+   if (!game.is (GameFlags::Xash3D)) {
+      ents.initialize ();
+   }
 
    // give the engine functions to the other DLL...
-   api_GiveFnptrsToDll (functionTable, glob);
+   api_GiveFnptrsToDll (table, glob);
+}
+
+CR_EXPORT int Server_GetBlendingInterface (int version, struct sv_blending_interface_s **ppinterface, struct engine_studio_api_s *pstudio, float *rotationmatrix, float *bonetransform) {
+   // this function synchronizes the studio model animation blending interface (i.e, what parts
+   // of the body move, which bones, which hitboxes and how) between the server and the game DLL.
+   // some MODs can be using a different hitbox scheme than the standard one.
+
+   auto api_GetBlendingInterface = game.lib ().resolve <decltype (&Server_GetBlendingInterface)> (__FUNCTION__);
+
+   if (!api_GetBlendingInterface) {
+      logger.error ("Could not resolve symbol \"%s\" in the game dll. Continuing...", __FUNCTION__);
+      return HLFalse;
+   }
+   return api_GetBlendingInterface (version, ppinterface, pstudio, rotationmatrix, bonetransform);
+}
+
+CR_EXPORT int Server_GetPhysicsInterface (int version, server_physics_api_t *physics_api, physics_interface_t *table) {
+   // this function handle the custom xash3d physics interface, that we're uses just for resolving
+   // entities between game and engine.
+
+   if (!table || !physics_api || version != SV_PHYSICS_INTERFACE_VERSION) 	{
+      return HLFalse;
+   }
+   table->version = SV_PHYSICS_INTERFACE_VERSION;
+
+   table->SV_CreateEntity = [] (edict_t *ent, const char *name) -> int {
+      auto func = game.lib ().resolve <EntityFunction> (name); // lookup symbol in game dll
+
+      // found one in game dll ?
+      if (func) {
+         func (&ent->v);
+         return HLTrue;
+
+      }
+      return -1;
+   };
+
+   table->SV_PhysicsEntity = [] (edict_t *) -> int {
+      return HLFalse;
+   };
+   return HLTrue;
 }
 
 DLSYM_RETURN EntityLinkage::lookup (SharedLibrary::Handle module, const char *function) {
@@ -987,7 +1011,7 @@ DLSYM_RETURN EntityLinkage::lookup (SharedLibrary::Handle module, const char *fu
       return reinterpret_cast <DLSYM_RETURN> (m_dlsym (static_cast <DLSYM_HANDLE> (handle), function));
    };
 
-   if (ents.isWorkaroundNeeded () && !strcmp (function, "CreateInterface")) {
+   if (ents.needsBypass () && !strcmp (function, "CreateInterface")) {
       ents.setPaused (true);
       auto ret = resolve (module);
 
@@ -1019,19 +1043,41 @@ DLSYM_RETURN EntityLinkage::lookup (SharedLibrary::Handle module, const char *fu
    return nullptr;
 }
 
+void EntityLinkage::callPlayerFunction (edict_t *ent) {
+   EntityFunction playerFunction = nullptr;
+
+   if (game.is (GameFlags::Xash3D)) {
+      playerFunction = game.lib ().resolve <EntityFunction> ("player");
+   }
+   else {
+      playerFunction = reinterpret_cast <EntityFunction> (lookup (game.lib ().handle (), "player"));
+   }
+   
+   if (!playerFunction) {
+      logger.fatal ("Cannot resolve player () function in gamedll.");
+   }
+   else {
+      playerFunction (&ent->v);
+   }
+}
+
 void EntityLinkage::initialize () {
    if (plat.arm || game.is (GameFlags::Metamod)) {
       return;
    }
 
    m_dlsym.initialize ("kernel32.dll", "GetProcAddress", DLSYM_FUNCTION);
-   m_dlsym.install (reinterpret_cast <void *> (EntityLinkage::replacement), true);
+   m_dlsym.install (reinterpret_cast <void *> (EntityLinkage::lookupHandler), true);
 
+   if (needsBypass ()) {
+      m_dlclose.initialize ("kernel32.dll", "FreeLibrary", DLCLOSE_FUNCTION);
+      m_dlclose.install (reinterpret_cast <void *> (EntityLinkage::closeHandler), true);
+   }
    m_self.locate (&engfuncs);
 }
 
 // add linkents for android
-#include "android.cpp"
+#include "entities.cpp"
 
 // override new/delete globally, need to be included in .cpp file
-#include <crlib/cr-override.h>
+#include <crlib/override.h>

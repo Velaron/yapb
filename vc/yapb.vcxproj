@@ -11,30 +11,31 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\ext\crlib\cr-array.h" />
-    <ClInclude Include="..\ext\crlib\cr-basic.h" />
-    <ClInclude Include="..\ext\crlib\cr-binheap.h" />
-    <ClInclude Include="..\ext\crlib\cr-color.h" />
-    <ClInclude Include="..\ext\crlib\cr-complete.h" />
-    <ClInclude Include="..\ext\crlib\cr-deque.h" />
-    <ClInclude Include="..\ext\crlib\cr-hashmap.h" />
-    <ClInclude Include="..\ext\crlib\cr-files.h" />
-    <ClInclude Include="..\ext\crlib\cr-detour.h" />
-    <ClInclude Include="..\ext\crlib\cr-http.h" />
-    <ClInclude Include="..\ext\crlib\cr-lambda.h" />
-    <ClInclude Include="..\ext\crlib\cr-library.h" />
-    <ClInclude Include="..\ext\crlib\cr-logger.h" />
-    <ClInclude Include="..\ext\crlib\cr-math.h" />
-    <ClInclude Include="..\ext\crlib\cr-memory.h" />
-    <ClInclude Include="..\ext\crlib\cr-movable.h" />
-    <ClInclude Include="..\ext\crlib\cr-override.h" />
-    <ClInclude Include="..\ext\crlib\cr-platform.h" />
-    <ClInclude Include="..\ext\crlib\cr-random.h" />
-    <ClInclude Include="..\ext\crlib\cr-string.h" />
-    <ClInclude Include="..\ext\crlib\cr-twin.h" />
-    <ClInclude Include="..\ext\crlib\cr-ulz.h" />
-    <ClInclude Include="..\ext\crlib\cr-uniqueptr.h" />
-    <ClInclude Include="..\ext\crlib\cr-vector.h" />
+    <ClInclude Include="..\ext\crlib\crlib\array.h" />
+    <ClInclude Include="..\ext\crlib\crlib\basic.h" />
+    <ClInclude Include="..\ext\crlib\crlib\binheap.h" />
+    <ClInclude Include="..\ext\crlib\crlib\color.h" />
+    <ClInclude Include="..\ext\crlib\crlib\crlib.h" />
+    <ClInclude Include="..\ext\crlib\crlib\deque.h" />
+    <ClInclude Include="..\ext\crlib\crlib\detour.h" />
+    <ClInclude Include="..\ext\crlib\crlib\files.h" />
+    <ClInclude Include="..\ext\crlib\crlib\hashmap.h" />
+    <ClInclude Include="..\ext\crlib\crlib\http.h" />
+    <ClInclude Include="..\ext\crlib\crlib\lambda.h" />
+    <ClInclude Include="..\ext\crlib\crlib\library.h" />
+    <ClInclude Include="..\ext\crlib\crlib\logger.h" />
+    <ClInclude Include="..\ext\crlib\crlib\math.h" />
+    <ClInclude Include="..\ext\crlib\crlib\memory.h" />
+    <ClInclude Include="..\ext\crlib\crlib\movable.h" />
+    <ClInclude Include="..\ext\crlib\crlib\override.h" />
+    <ClInclude Include="..\ext\crlib\crlib\platform.h" />
+    <ClInclude Include="..\ext\crlib\crlib\random.h" />
+    <ClInclude Include="..\ext\crlib\crlib\simd.h" />
+    <ClInclude Include="..\ext\crlib\crlib\string.h" />
+    <ClInclude Include="..\ext\crlib\crlib\twin.h" />
+    <ClInclude Include="..\ext\crlib\crlib\ulz.h" />
+    <ClInclude Include="..\ext\crlib\crlib\uniqueptr.h" />
+    <ClInclude Include="..\ext\crlib\crlib\vector.h" />
     <ClInclude Include="..\ext\hlsdk\const.h" />
     <ClInclude Include="..\ext\hlsdk\eiface.h" />
     <ClInclude Include="..\ext\hlsdk\extdll.h" />
@@ -56,7 +57,7 @@
     <ClInclude Include="..\inc\version.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\android.cpp" />
+    <ClCompile Include="..\src\entities.cpp" />
     <ClCompile Include="..\src\botlib.cpp" />
     <ClCompile Include="..\src\chatlib.cpp" />
     <ClCompile Include="..\src\combat.cpp" />
@@ -89,7 +90,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <EnableASAN>false</EnableASAN>
@@ -97,7 +98,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseOfMfc>false</UseOfMfc>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseDebugLibraries>false</UseDebugLibraries>
     <EnableASAN>false</EnableASAN>
   </PropertyGroup>
@@ -148,14 +149,14 @@
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>..\vc;..\inc;..\ext;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WIN32;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\vc;..\inc;..\ext;..\ext\crlib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_DEBUG;CR_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <PrecompiledHeader />
       <PrecompiledHeaderFile>yapb.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>.\debug\inf\yapb.pch</PrecompiledHeaderOutputFile>
       <ExpandAttributedSource>false</ExpandAttributedSource>
-      <AssemblerOutput>AssemblyAndSourceCode</AssemblerOutput>
+      <AssemblerOutput>NoListing</AssemblerOutput>
       <AssemblerListingLocation>.\debug\asm\</AssemblerListingLocation>
       <ObjectFileName>.\debug\obj\</ObjectFileName>
       <ProgramDataBaseFileName>.\debug\inf</ProgramDataBaseFileName>
@@ -170,6 +171,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <DisableLanguageExtensions>false</DisableLanguageExtensions>
       <LanguageStandard>Default</LanguageStandard>
+      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -220,7 +222,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
-      <AdditionalIncludeDirectories>..\vc;..\inc;..\ext;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\vc;..\inc;..\ext;..\ext\crlib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NDEBUG;WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ExceptionHandling>false</ExceptionHandling>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
@@ -236,7 +238,7 @@
       <InterproceduralOptimization>MultiFile</InterproceduralOptimization>
       <FlushDenormalResultsToZero>true</FlushDenormalResultsToZero>
       <Parallelization>false</Parallelization>
-      <FloatingPointModel>Fast</FloatingPointModel>
+      <FloatingPointModel>Precise</FloatingPointModel>
       <Optimization>Full</Optimization>
       <GenerateAlternateCodePaths>AVXI</GenerateAlternateCodePaths>
       <UseProcessorExtensions>AVXI</UseProcessorExtensions>
@@ -249,6 +251,7 @@
       <StringPooling>true</StringPooling>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <FunctionLevelLinking>true</FunctionLevelLinking>
+      <LanguageStandard>Default</LanguageStandard>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>

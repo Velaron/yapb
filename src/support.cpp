@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -344,10 +344,10 @@ bool BotSupport::findNearestPlayer (void **pvHolder, edict_t *to, float searchDi
          continue;
       }
 
-      if ((sameTeam && client.team != toTeam) || (needAlive && !(client.flags & ClientFlags::Alive)) || (needBot && !isFakeClient (client.ent)) || (needDrawn && (client.ent->v.effects & EF_NODRAW)) || (needBotWithC4 && (client.ent->v.weapons & Weapon::C4))) {
+      if ((sameTeam && client.team != toTeam) || (needAlive && !(client.flags & ClientFlags::Alive)) || (needBot && !bots[client.ent]) || (needDrawn && (client.ent->v.effects & EF_NODRAW)) || (needBotWithC4 && (client.ent->v.weapons & Weapon::C4))) {
          continue; // filter players with parameters
       }
-      float distance = (client.ent->v.origin - to->v.origin).length ();
+      float distance = client.ent->v.origin.distance (to->v.origin);
 
       if (distance < nearestPlayer && distance < searchDistance) {
          nearestPlayer = distance;
@@ -370,12 +370,12 @@ bool BotSupport::findNearestPlayer (void **pvHolder, edict_t *to, float searchDi
 }
 
 void BotSupport::listenNoise (edict_t *ent, StringRef sample, float volume) {
-   // this function called by the sound hooking code (in emit_sound) enters the played sound into  the array associated with the entity
+   // this function called by the sound hooking code (in emit_sound) enters the played sound into the array associated with the entity
 
    if (game.isNullEntity (ent) || sample.empty ()) {
       return;
    }
-   const Vector &origin = game.getEntityWorldOrigin (ent);
+   const auto &origin = game.getEntityOrigin (ent);
 
    // something wrong with sound...
    if (origin.empty ()) {
@@ -398,7 +398,7 @@ void BotSupport::listenNoise (edict_t *ent, StringRef sample, float volume) {
          if (!(client.flags & ClientFlags::Used) || !(client.flags & ClientFlags::Alive)) {
             continue;
          }
-         auto distance = (client.origin - origin).lengthSq ();
+         auto distance = client.origin.distanceSq (origin);
 
          // now find nearest player
          if (distance < nearest) {
@@ -496,8 +496,6 @@ void BotSupport::simulateNoise (int playerIndex) {
       }
    }
    else {
-      extern ConVar mp_footsteps;
-
       if (mp_footsteps.bool_ ()) {
          // moves fast enough?
          noise.dist = 1280.0f * (client.ent->v.velocity.length2d () / 260.0f);
@@ -582,9 +580,7 @@ void BotSupport::calculatePings () {
       engfuncs.pfnGetPlayerStats (client.ent, &ping, &loss);
 
       // store normal client ping
-      client.ping = getPingBitmask (client.ent, loss, ping > 0 ? ping / 2 : rg.get (8, 16)); // getting player ping sometimes fails
-      client.pingUpdate = true; // force resend ping
-
+      client.ping = getPingBitmask (client.ent, loss, ping > 0 ? ping : rg.get (8, 16)); // getting player ping sometimes fails
       ++numHumans;
 
       average.first += ping;
@@ -622,26 +618,24 @@ void BotSupport::calculatePings () {
       else if (botPing > 70) {
          botPing = rg.get (30, 40);
       }
-
       client.ping = getPingBitmask (client.ent, botLoss, botPing);
-      client.pingUpdate = true; // force resend ping
    }
 }
 
-void BotSupport::sendPings (edict_t *to) {
+void BotSupport::emitPings (edict_t *to) {
    MessageWriter msg;
 
    // missing from sdk
    constexpr int kGamePingSVC = 17;
+
+   auto isThirdpartyBot = [] (edict_t *ent) {
+      return !bots[ent] && (ent->v.flags & FL_FAKECLIENT);
+   };
    
    for (auto &client : m_clients) {
-      if (!(client.flags & ClientFlags::Used) || client.ent == game.getLocalEntity ()) {
+      if (!(client.flags & ClientFlags::Used) || client.ent == game.getLocalEntity () || isThirdpartyBot (client.ent)) {
          continue;
       }
-      if (!client.pingUpdate) {
-         continue;
-      }
-      client.pingUpdate = false;
 
       // no ping, no fun
       if (!client.ping) {
@@ -688,7 +682,19 @@ bool BotSupport::isObjectInsidePlane (FrustumPlane &plane, const Vector &center,
 }
 
 bool BotSupport::isModel (const edict_t *ent, StringRef model) {
-   return model == ent->v.model.chars (9);
+   return model.startsWith (ent->v.model.chars (9));
+}
+
+String BotSupport::getCurrentDateTime () {
+   time_t ticks = time (&ticks);
+   tm timeinfo {};
+
+   plat.loctime (&timeinfo, &ticks);
+
+   auto timebuf = strings.chars ();
+   strftime (timebuf, StringBuffer::StaticBufferSize, "%d-%m-%Y %H:%M:%S", &timeinfo);
+
+   return String (timebuf);
 }
 
 int32 BotSupport::sendTo (int socket, const void *message, size_t length, int flags, const sockaddr *dest, int destLength) {

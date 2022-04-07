@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -12,7 +12,7 @@ ConVar cv_autovacate ("yb_autovacate", "1", "Kick bots to automatically make roo
 ConVar cv_quota ("yb_quota", "9", "Specifies the number bots to be added to the game.", true, 0.0f, static_cast <float> (kGameMaxPlayers));
 ConVar cv_quota_mode ("yb_quota_mode", "normal", "Specifies the type of quota.\nAllowed values: 'normal', 'fill', and 'match'.\nIf 'fill', the server will adjust bots to keep N players in the game, where N is yb_quota.\nIf 'match', the server will maintain a 1:N ratio of humans to bots, where N is yb_quota_match.", false);
 ConVar cv_quota_match ("yb_quota_match", "0", "Number of players to match if yb_quota_mode set to 'match'", true, 0.0f, static_cast <float> (kGameMaxPlayers));
-ConVar cv_think_fps ("yb_think_fps", "30.0", "Specifies how many times per second bot code will run.", true, 30.0f, 90.0f);
+ConVar cv_think_fps ("yb_think_fps", "26.0", "Specifies how many times per second bot code will run.", true, 24.0f, 90.0f);
 ConVar cv_autokill_delay ("yb_autokill_delay", "0.0", "Specifies amount of time in seconds when bots will be killed if no humans left alive.", true, 0.0f, 90.0f);
 
 ConVar cv_join_after_player ("yb_join_after_player", "0", "Specifies whether bots should join server, only when at least one human player in game.");
@@ -26,8 +26,9 @@ ConVar cv_difficulty_min ("yb_difficulty_min", "-1", "Lower bound of random diff
 ConVar cv_difficulty_max ("yb_difficulty_max", "-1", "Upper bound of random difficulty on bot creation. Only affects newly created bots. -1 means yb_difficulty only used.", true, -1.0f, 4.0f);
 ConVar cv_difficulty_auto ("yb_difficulty_auto", "0", "Enables each bot balances own difficulty based kd-ratio of team.", true, 0.0f, 1.0f);
 
-ConVar cv_show_avatars ("yb_show_avatars", "1", "Enables or disabels displaying bot avatars in front of their names in scoreboard. Note, that is currently you can see only avatars of your steam friends.");
+ConVar cv_show_avatars ("yb_show_avatars", "1", "Enables or disables displaying bot avatars in front of their names in scoreboard. Note, that is currently you can see only avatars of your steam friends.");
 ConVar cv_show_latency ("yb_show_latency", "2", "Enables latency display in scoreboard.\nAllowed values: '0', '1', '2'.\nIf '0', there is nothing displayed.\nIf '1', there is a 'BOT' is displayed.\nIf '2' fake ping is displayed.", true, 0.0f, 2.0f);
+ConVar cv_save_bots_names ("yb_save_bots_names", "1", "Allows to save bot names upon changelevel, so bot names will be the same after a map change.", true, 0.0f, 1.0f);
 
 ConVar cv_botskin_t ("yb_botskin_t", "0", "Specifies the bots wanted skin for Terrorist team.", true, 0.0f, 5.0f);
 ConVar cv_botskin_ct ("yb_botskin_ct", "0", "Specifies the bots wanted skin for CT team.", true, 0.0f, 5.0f);
@@ -120,7 +121,7 @@ void BotManager::touchKillerEntity (Bot *bot) {
    m_killerEntity->v.dmg_inflictor = bot->ent ();
    m_killerEntity->v.dmg = (bot->pev->health + bot->pev->armorvalue) * 4.0f;
 
-   KeyValueData kv;
+   KeyValueData kv {};
    kv.szClassName = const_cast <char *> (prop.classname.chars ());
    kv.szKeyName = "damagetype";
    kv.szValue = const_cast <char *> (strings.format ("%d", cr::bit (4)));
@@ -208,8 +209,14 @@ BotCreateResult BotManager::create (StringRef name, int difficulty, int personal
    else {
       resultName = name;
    }
+   const bool hasNamePrefix = !strings.isEmpty (cv_name_prefix.str ());
 
-   if (!strings.isEmpty (cv_name_prefix.str ())) {
+   // disable save bots names if prefix is enabled
+   if (hasNamePrefix && cv_save_bots_names.bool_ ()) {
+      cv_save_bots_names.set (0);
+   }
+
+   if (hasNamePrefix) {
       String prefixed; // temp buffer for storing modified name
       prefixed.assignf ("%s %s", cv_name_prefix.str (), resultName);
 
@@ -289,6 +296,11 @@ void BotManager::addbot (StringRef name, int difficulty, int personality, int te
    request.skin = skin;
    request.manual = manual;
 
+   // restore the bot name
+   if (cv_save_bots_names.bool_ () && name.empty () && !m_saveBotNames.empty ()) {
+      request.name = m_saveBotNames.popFront ();
+   }
+
    // put to queue
    m_addRequests.emplaceLast (cr::move (request));
 }
@@ -297,7 +309,7 @@ void BotManager::addbot (StringRef name, StringRef difficulty, StringRef persona
    // this function is same as the function above, but accept as parameters string instead of integers
 
    BotRequest request {};
-   StringRef any = "*";
+   static StringRef any = "*";
 
    request.name = (name.empty () || name == any) ? StringRef ("\0") : name;
    request.difficulty = (difficulty.empty () || difficulty == any) ? -1 : difficulty.int_ ();
@@ -306,7 +318,7 @@ void BotManager::addbot (StringRef name, StringRef difficulty, StringRef persona
    request.personality = (personality.empty () || personality == any) ? -1 : personality.int_ ();
    request.manual = manual;
 
-   m_addRequests.emplaceLast (cr::move (request));
+   addbot (request.name, request.difficulty, request.personality, request.team, request.skin, request.manual);
 }
 
 void BotManager::maintainQuota () {
@@ -394,8 +406,7 @@ void BotManager::maintainQuota () {
       createRandom ();
    }
    else if (desiredBotCount < botsInGame) {
-      auto tp = countTeamPlayers ();
-
+      const auto &tp = countTeamPlayers ();
       bool isKicked = false;
 
       if (tp.first > tp.second) {
@@ -411,6 +422,12 @@ void BotManager::maintainQuota () {
       // if we can't kick player from correct team, just kick any random to keep quota control work
       if (!isKicked) {
          kickRandom (false, Team::Unassigned);
+      }
+   }
+   else {
+      // clear the saved names when quota balancing ended
+      if (cv_save_bots_names.bool_ () && !m_saveBotNames.empty ()) {
+         m_saveBotNames.clear ();
       }
    }
    m_quotaMaintainTime = game.time () + 0.40f;
@@ -547,8 +564,7 @@ void BotManager::serverFill (int selection, int personality, int difficulty, int
       selection = 5;
    }
    char teams[6][12] = {"", {"Terrorists"}, {"CTs"}, "", "", {"Random"}, };
-
-   int toAdd = numToAdd == -1 ? maxClients - (getHumansCount () + getBotCount ()) : numToAdd;
+   auto toAdd = numToAdd == -1 ? maxClients - (getHumansCount () + getBotCount ()) : numToAdd;
 
    for (int i = 0; i <= toAdd; ++i) {
       addbot ("", difficulty, personality, selection, -1, true);
@@ -559,12 +575,17 @@ void BotManager::serverFill (int selection, int personality, int difficulty, int
 void BotManager::kickEveryone (bool instant, bool zeroQuota) {
    // this function drops all bot clients from server (this function removes only yapb's)
 
-   if (cv_quota.bool_ ()) {
+   if (cv_quota.bool_ () && hasBotsOnline ()) {
       ctrl.msg ("Bots are removed from server.");
    }
 
    if (zeroQuota) {
       decrementQuota (0);
+   }
+
+   // if everyone is kicked, clear the saved bot names
+   if (cv_save_bots_names.bool_ () && !m_saveBotNames.empty ()) {
+      m_saveBotNames.clear ();
    }
 
    if (instant) {
@@ -754,7 +775,7 @@ float BotManager::getConnectTime (StringRef name, float original) {
    // this function get's fake bot player time.
 
    for (const auto &bot : m_bots) {
-      if (name == bot->pev->netname.chars ()) {
+      if (name.startsWith (bot->pev->netname.chars ())) {
          return bot->getConnectionTime ();
       }
    }
@@ -823,8 +844,6 @@ void BotManager::updateTeamEconomics (int team, bool setTrue) {
    // that have not enough money to buy primary (with economics), and if this result higher 80%, player is can't
    // buy primary weapons.
 
-   extern ConVar cv_economics_rounds;
-
    if (setTrue || !cv_economics_rounds.bool_ ()) {
       m_economicsGood[team] = true;
       return; // don't check economics while economics disable
@@ -877,8 +896,6 @@ void BotManager::updateBotDifficulties () {
 }
 
 void BotManager::balanceBotDifficulties () {
-   extern ConVar cv_whose_your_daddy;
-
    // with nightmare difficulty, there is no balance
    if (cv_whose_your_daddy.bool_ ()) {
       return;
@@ -917,7 +934,6 @@ Bot::Bot (edict_t *bot, int difficulty, int personality, int team, int skin) {
 
    // we're not initializing all the variables in bot class, so do an ugly thing... memset this
    plat.bzero (this, sizeof (*this));
-
 
    int clientIndex = game.indexOfEntity (bot);
    pev = &bot->v;
@@ -1115,6 +1131,10 @@ void BotManager::erase (Bot *bot) {
       if (e.get () != bot) {
          continue;
       }
+
+      if (cv_save_bots_names.bool_ ()) {
+         m_saveBotNames.emplaceLast (bot->pev->netname.chars ());
+      }
       bot->markStale ();
 
       auto index = m_bots.index (e);
@@ -1217,20 +1237,7 @@ void Bot::newRound () {
    m_team = game.getTeam (ent ());
    m_isVIP = false;
 
-   switch (m_personality) {
-   default:
-   case Personality::Normal:
-      m_pathType = rg.chance (50) ? FindPath::Optimal : FindPath::Safe;
-      break;
-
-   case Personality::Rusher:
-      m_pathType = FindPath::Fast;
-      break;
-
-   case Personality::Careful:
-      m_pathType = FindPath::Safe;
-      break;
-   }
+   resetPathSearchType ();
 
    // clear all states & tasks
    m_states = 0;
@@ -1262,6 +1269,8 @@ void Bot::newRound () {
 
    m_breakableEntity = nullptr;
    m_breakableOrigin = nullptr;
+   m_lastBreakable = nullptr;
+
    m_timeDoorOpen = 0.0f;
 
    resetCollision ();
@@ -1282,6 +1291,7 @@ void Bot::newRound () {
    m_shootAtDeadTime = 0.0f;
    m_oldCombatDesire = 0.0f;
    m_liftUsageTime = 0.0f;
+   m_breakableTime = 0.0f;
 
    m_avoidGrenade = nullptr;
    m_needAvoidGrenade = 0;
@@ -1390,6 +1400,8 @@ void Bot::newRound () {
       msg = BotMsg::None;
    }
    m_msgQueue.clear ();
+   m_goalHistory.clear ();
+   m_ignoredBreakable.clear ();
 
    // clear last trace
    for (auto i = 0; i < TraceChannel::Num; ++i) {
@@ -1408,6 +1420,25 @@ void Bot::newRound () {
       pushChatterMessage (Chatter::NewRound);
    }
    m_updateInterval = game.is (GameFlags::Legacy | GameFlags::Xash3D) ? 0.0f : (1.0f / cr::clamp (cv_think_fps.float_ (), 30.0f, 60.0f));
+}
+
+void Bot::resetPathSearchType () {
+   const auto morale = m_fearLevel > m_agressionLevel ? rg.chance (30) : rg.chance (70);
+
+   switch (m_personality) {
+   default:
+   case Personality::Normal:
+      m_pathType = morale ? FindPath::Optimal : FindPath::Safe;
+      break;
+
+   case Personality::Rusher:
+      m_pathType = morale ? FindPath::Fast : FindPath::Optimal;
+      break;
+
+   case Personality::Careful:
+      m_pathType = morale ? FindPath::Optimal : FindPath::Safe;
+      break;
+   }
 }
 
 void Bot::kill () {
@@ -1489,7 +1520,7 @@ void Bot::updateTeamJoin () {
       }
 
       if (m_wantedTeam != 1 && m_wantedTeam != 2) {
-         auto players = bots.countTeamPlayers ();
+         const auto &players = bots.countTeamPlayers ();
 
          // balance the team upon creation, we can't use game auto select (5) from now, as we use enforced skins belows
          // due to we don't know the team bot selected, and TeamInfo messages still shows us we're spectators..
@@ -1754,7 +1785,7 @@ void BotManager::selectLeaders (int team, bool reset) {
          m_leaderChoosen[Team::CT] = true;
       }
    }
-   else if (game.mapIs (MapFlags::Escape | MapFlags::KnifeArena | MapFlags::Fun)) {
+   else if (game.mapIs (MapFlags::Escape | MapFlags::KnifeArena | MapFlags::FightYard)) {
       auto bot = bots.findHighestFragBot (team);
 
       if (!m_leaderChoosen[team] && bot) {
@@ -1828,6 +1859,11 @@ void BotManager::initRound () {
 }
 
 void BotManager::setBombPlanted (bool isPlanted) {
+   if (cv_ignore_objectives.bool_ ()) {
+      m_bombPlanted = false;
+      return;
+   }
+
    if (isPlanted) {
       m_timeBombPlanted = game.time ();
    }

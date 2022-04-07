@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -8,7 +8,7 @@
 #include <yapb.h>
 
 ConVar cv_display_menu_text ("yb_display_menu_text", "1", "Enables or disables display menu text, when players asks for menu. Useful only for Android.");
-ConVar cv_password ("yb_password", "", "The value (password) for the setinfo key, if user set's correct password, he's gains access to bot commands and menus.", false, 0.0f, 0.0f, Var::Password);
+ConVar cv_password ("yb_password", "", "The value (password) for the setinfo key, if user sets correct password, he's gains access to bot commands and menus.", false, 0.0f, 0.0f, Var::Password);
 ConVar cv_password_key ("yb_password_key", "_ybpw", "The name of setinfo key used to store password to bot commands and menus.", false);
 
 int BotControl::cmdAddBot () {
@@ -278,7 +278,8 @@ int BotControl::cmdNode () {
       "upload",
       "save",
       "load",
-      "help"
+      "help",
+      "erase"
    };
 
    // check if cmd is allowed on dedicated server
@@ -349,7 +350,7 @@ int BotControl::cmdNode () {
       }
    }
    if (commands.has (strValue (cmd))) {
-      auto item = commands[strValue (cmd)];
+      const auto &item = commands[strValue (cmd)];
 
       // graph have only bad format return status
       int status = (this->*item.handler) ();
@@ -405,8 +406,6 @@ int BotControl::cmdNodeOn () {
    }
 
    if (graph.hasEditFlag (GraphEdit::On)) {
-      extern ConVar mp_roundtime, mp_freezetime, mp_timelimit;
-
       mp_roundtime.set (9);
       mp_freezetime.set (0);
       mp_timelimit.set (0);
@@ -527,7 +526,7 @@ int BotControl::cmdNodeDelete () {
    // turn graph on
    graph.setEditFlag (GraphEdit::On);
 
-   // if "neareset" or nothing passed delete neareset, else delete by index
+   // if "nearest" or nothing passed delete nearest, else delete by index
    if (strValue (nearest).empty () || strValue (nearest) == "nearest") {
       graph.erase (kInvalidNodeIndex);
    }
@@ -565,8 +564,6 @@ int BotControl::cmdNodeCache () {
    // if "neareset" or nothing passed delete neareset, else delete by index
    if (strValue (nearest).empty () || strValue (nearest) == "nearest") {
       graph.cachePoint (kInvalidNodeIndex);
-
-      msg ("Nearest node has been put into the memory.");
    }
    else {
       int index = intValue (nearest);
@@ -574,10 +571,6 @@ int BotControl::cmdNodeCache () {
       // check for existence
       if (graph.exists (index)) {
          graph.cachePoint (index);
-         msg ("Node %d has been put into the memory.", index);
-      }
-      else {
-         msg ("Could not put node %d into the memory.", index);
       }
    }
    return BotCommandResult::Handled;
@@ -701,7 +694,7 @@ int BotControl::cmdNodePathDelete () {
    // turn graph on
    graph.setEditFlag (GraphEdit::On);
 
-   // delete the patch
+   // delete the path
    graph.erasePath ();
 
    return BotCommandResult::Handled;
@@ -767,7 +760,7 @@ int BotControl::cmdNodeUpload () {
    String mapName = game.getMapName ();
 
    // try to upload the file
-   if (http.uploadFile ("http://yapb.ru/upload", strings.format ("%sgraph/%s.graph", graph.getDataDirectory (false), mapName.lowercase ()))) {
+   if (http.uploadFile ("http://yapb.jeefo.net/upload", strings.format ("%sgraph/%s.graph", graph.getDataDirectory (false), mapName.lowercase ()))) {
       msg ("Graph file was successfully validated and uploaded to the YaPB Graph DB (%s).", product.download);
       msg ("It will be available for download for all YaPB users in a few minutes.");
       msg ("\n");
@@ -851,7 +844,11 @@ int BotControl::cmdNodeIterateCamp () {
             m_campIterator.push (i);
          }
       }
-      msg ("Ready for iteration. Type 'next' to go to first camp node.");
+      if (!m_campIterator.empty ()) {
+         msg ("Ready for iteration. Type 'next' to go to first camp node.");
+         return BotCommandResult::Handled;
+      }
+      msg ("Unable to begin iteration, camp points is not set.");
    }
    return BotCommandResult::Handled;
 }
@@ -900,13 +897,20 @@ int BotControl::menuMain (int item) {
 int BotControl::menuFeatures (int item) {
    closeMenu (); // reset menu display
 
+   auto autoAcquireEditorRights = [&] () {
+      if (!graph.hasEditor ()) {
+         graph.setEditor (m_ent);
+      }
+      return graph.hasEditor () && graph.getEditor () == m_ent ? Menu::NodeMainPage1 : Menu::Features;
+   };
+
    switch (item) {
    case 1:
       showMenu (Menu::WeaponMode);
       break;
 
    case 2:
-      showMenu (graph.hasEditor () ? Menu::NodeMainPage1 : Menu::Features);
+      showMenu (autoAcquireEditorRights ());
       break;
 
    case 3:
@@ -914,7 +918,6 @@ int BotControl::menuFeatures (int item) {
       break;
 
    case 4:
-      extern ConVar cv_debug;
       cv_debug.set (cv_debug.int_ () ^ 1);
 
       showMenu (Menu::Features);
@@ -1067,8 +1070,6 @@ int BotControl::menuTeamSelect (int item) {
       closeMenu (); // reset menu display
 
       if (item < 3) {
-         extern ConVar mp_limitteams, mp_autoteambalance;
-
          // turn off cvars if specified team
          mp_limitteams.set (0);
          mp_autoteambalance.set (0);
@@ -1356,7 +1357,7 @@ int BotControl::menuGraphType (int item) {
       break;
 
    case 8:
-      graph.add (100);
+      graph.add (NodeAddFlag::Goal);
       showMenu (Menu::NodeType);
       break;
 
@@ -1565,7 +1566,7 @@ bool BotControl::executeCommands () {
    if (prefix != product.cmdPri && prefix != product.cmdSec) {
       return false;
    }
-   Client &client = util.getClient (game.indexOfPlayer (m_ent));
+   auto &client = util.getClient (game.indexOfPlayer (m_ent));
 
    // do not allow to execute stuff for non admins
    if (m_ent != game.getLocalEntity () && !(client.flags & ClientFlags::Admin)) {
@@ -1679,7 +1680,7 @@ bool BotControl::executeMenus () {
    // let's get handle
    for (auto &menu : m_menus) {
       if (menu.ident == issuer.menu) {
-         return (this->*menu.handler) (strValue (1).int_ ());
+         return (this->*menu.handler) (strValue (1).int_ ()) == BotCommandResult::Handled;
       }
    }
    return false;
@@ -1690,6 +1691,8 @@ void BotControl::showMenu (int id) {
 
    // make menus looks like we need only once
    if (!menusParsed) {
+      m_ignoreTranslate = false; // always translate menus
+
       for (auto &parsed : m_menus) {
          StringRef translated = conf.translate (parsed.text);
 
@@ -1710,7 +1713,6 @@ void BotControl::showMenu (int id) {
       return;
    }
    auto &client = util.getClient (game.indexOfPlayer (m_ent));
-
 
    auto sendMenu = [&](int32 slots, bool last, StringRef text) {
       MessageWriter (MSG_ONE, msgs.id (NetMsg::ShowMenu), nullptr, m_ent)

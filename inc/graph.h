@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -41,11 +41,6 @@ CR_DECLARE_SCOPED_ENUM (PathConnection,
    Outgoing = 0,
    Incoming,
    Bidirectional
-)
-
-// defines node add commands
-CR_DECLARE_SCOPED_ENUM (GraphAdd,
-   Normal = 0,
 )
 
 // a* route state
@@ -92,6 +87,20 @@ CR_DECLARE_SCOPED_ENUM (LiftState,
    LookingButtonInside,
    TravelingBy,
    Leaving
+)
+
+// node add flags
+CR_DECLARE_SCOPED_ENUM (NodeAddFlag,
+   Normal = 0,
+   TOnly = 1,
+   CTOnly = 2,
+   NoHostage = 3,
+   Rescue = 4,
+   Camp = 5,
+   CampEnd = 6,
+   JumpStart = 9,
+   JumpEnd = 10,
+   Goal = 100
 )
 
 // a* route
@@ -261,6 +270,7 @@ private:
    int m_findWPIndex;
    int m_facingAtIndex;
    int m_highestDamage[kGameTeamNum] {};
+   int m_autoSaveCount;
 
    float m_timeJumpStarted;
    float m_autoPathDistance;
@@ -312,6 +322,7 @@ public:
    int getDangerDamage (int team, int start, int goal);
    int getPathDist (int srcIndex, int destIndex);
    int clearConnections (int index);
+   int getBspSize ();
 
    float calculateTravelTime (float maxSpeed, const Vector &src, const Vector &origin);
 

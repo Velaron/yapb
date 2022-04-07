@@ -1,13 +1,13 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
 
 #include <yapb.h>
 
-ConVar cv_csdm_mode ("yb_csdm_mode", "0", "Enables or disables CSDM / FFA mode for bots.\nAllowed values: '0', '1', '2', '3'.\nIf '0', CSDM / FFA mode is auto-detected.\nIf '1', CSDM mode is enabled, but FFA is disabled.\nIf '2' CSDM and FFA mode is enabled.\nIf '3' CSDM and FFA mode is disabled.", true, 0.0f, 3.0f);
+ConVar cv_csdm_mode ("yb_csdm_mode", "0", "Enables or disables CSDM / FFA mode for bots.\nAllowed values: '0', '1', '2', '3'.\nIf '0', CSDM / FFA mode is auto-detected.\nIf '1', CSDM mode is enabled, but FFA is disabled.\nIf '2', CSDM and FFA mode is enabled.\nIf '3', CSDM and FFA mode is disabled.", true, 0.0f, 3.0f);
 
 ConVar sv_skycolor_r ("sv_skycolor_r", nullptr, Var::GameRef);
 ConVar sv_skycolor_g ("sv_skycolor_g", nullptr, Var::GameRef);
@@ -21,7 +21,8 @@ Game::Game () {
 
    m_gameFlags = 0;
    m_mapFlags = 0;
-   m_slowFrame = 0.0f;
+   m_oneSecondFrame = 0.0f;
+   m_halfSecondFrame = 0.0f;
 
    m_cvars.clear ();
 }
@@ -83,6 +84,9 @@ void Game::levelInitialize (edict_t *entities, int max) {
 
    // install the sendto hook to fake queries
    util.installSendTo ();
+
+   // flush any print queue
+   ctrl.resetFlushTimestamp ();
    
    // go thru the all entities on map, and do whatever we're want
    for (int i = 0; i < max; ++i) {
@@ -122,7 +126,7 @@ void Game::levelInitialize (edict_t *entities, int max) {
       else if (strcmp (classname, "func_vip_safetyzone") == 0 || strcmp (classname, "info_vip_safetyzone") == 0) {
          m_mapFlags |= MapFlags::Assassination; // assassination map
       }
-      else if (strcmp (classname, "hostage_entity") == 0) {
+      else if (strcmp (classname, "hostage_entity") == 0 || strcmp (classname, "monster_scientist") == 0) {
          m_mapFlags |= MapFlags::HostageRescue; // rescue map
       }
       else if (strcmp (classname, "func_bomb_target") == 0 || strcmp (classname, "info_bomb_target") == 0) {
@@ -149,14 +153,15 @@ void Game::levelInitialize (edict_t *entities, int max) {
 
    // next maps doesn't have map-specific entities, so determine it by name
    if (strncmp (getMapName (), "fy_", 3) == 0) {
-      m_mapFlags |= MapFlags::Fun;
+      m_mapFlags |= MapFlags::FightYard;
    }
    else if (strncmp (getMapName (), "ka_", 3) == 0) {
       m_mapFlags |= MapFlags::KnifeArena;
    }
 
    // reset some timers
-   m_slowFrame = 0.0f;
+   m_oneSecondFrame = 0.0f;
+   m_halfSecondFrame = 0.0f;
 }
 
 void Game::drawLine (edict_t *ent, const Vector &start, const Vector &end, int width, int noise, const Color &color, int brightness, int speed, int life, DrawLine type) {
@@ -210,7 +215,7 @@ void Game::testLine (const Vector &start, const Vector &end, int ignoreFlags, ed
    engfuncs.pfnTraceLine (start, end, engineFlags, ignoreEntity, ptr);
 }
 
-bool Game::testLineChannel (TraceChannel channel, const Vector &start, const Vector &end, int ignoreFlags, edict_t *ignoreEntity, TraceResult *ptr) {
+bool Game::testLineChannel (TraceChannel channel, const Vector &start, const Vector &end, int ignoreFlags, edict_t *ignoreEntity, TraceResult &result) {
    // this function traces a line dot by dot, starting from vecStart in the direction of vecEnd,
    // ignoring or not monsters (depending on the value of IGNORE_MONSTERS, true or false), and stops
    // at the first obstacle encountered, returning the results of the trace in the TraceResult structure
@@ -223,17 +228,17 @@ bool Game::testLineChannel (TraceChannel channel, const Vector &start, const Vec
 
    // check if bot is firing trace line
    if (bot && bot->canSkipNextTrace (channel)) {
-      ptr = bot->getLastTraceResult (channel); // set the result from bot stored one
+      result = bot->getLastTraceResult (channel); // set the result from bot stored one
 
       // current call is skipped
       return true;
    }
    else {
-      testLine (start, end, ignoreFlags, ignoreEntity, ptr);
+      testLine (start, end, ignoreFlags, ignoreEntity, &result);
 
       // if we're still reaching here, save the last trace result
       if (bot) {
-         bot->setLastTraceResult (channel, ptr);
+         bot->setLastTraceResult (channel, &result);
       }
    }
    return false;
@@ -254,6 +259,32 @@ void Game::testHull (const Vector &start, const Vector &end, int ignoreFlags, in
    engfuncs.pfnTraceHull (start, end, !!(ignoreFlags & TraceIgnore::Monsters), hullNumber, ignoreEntity, ptr);
 }
 
+// helper class for reading wave header
+class WaveEndianessHelper : public DenyCopying {
+private:
+#if defined (CR_ARCH_CPU_BIG_ENDIAN)
+   bool little { false };
+#else
+   bool little { true };
+#endif
+
+public:
+   uint16_t read16 (uint16_t value) {
+      return little ? value : static_cast <uint16_t> ((value >> 8) | (value << 8));
+   }
+
+   uint32_t read32 (uint32_t value) {
+      return little ? value : (((value & 0x000000ff) << 24) | ((value & 0x0000ff00) << 8) | ((value & 0x00ff0000) >> 8) | ((value & 0xff000000) >> 24));
+   }
+
+   bool isWave (char *format) {
+      if (little && memcmp (format, "WAVE", 4) == 0) {
+         return true;
+      }
+      return *reinterpret_cast <uint32_t *> (format) == 0x57415645;
+   }
+};
+
 float Game::getWaveLen (const char *fileName) {
    auto filePath = strings.format ("%s/%s/%s.wav", getRunningModName (), cv_chatter_path.str (), fileName);
 
@@ -264,47 +295,47 @@ float Game::getWaveLen (const char *fileName) {
       return 0.0f;
    }
 
-   // check if we have engine function for this
-   if (!is (GameFlags::Xash3D) && plat.checkPointer (engfuncs.pfnGetApproxWavePlayLen)) {
-      fp.close ();
-      return engfuncs.pfnGetApproxWavePlayLen (filePath) / 1000.0f;
-   }
-
    // else fuck with manual search
    struct WavHeader {
-      char riffChunkId[4];
-      unsigned long packageSize;
-      char chunkID[4];
-      char formatChunkId[4];
-      unsigned long formatChunkLength;
-      uint16 dummy;
-      uint16 channels;
-      unsigned long sampleRate;
-      unsigned long bytesPerSecond;
-      uint16 bytesPerSample;
-      uint16 bitsPerSample;
+      char riff[4];
+      uint32_t chunkSize;
+      char wave[4];
+      char fmt[4];
+      uint32_t subchunk1Size;
+      uint16_t audioFormat;
+      uint16_t numChannels;
+      uint32_t sampleRate;
+      uint32_t byteRate;
+      uint16_t blockAlign;
+      uint16_t bitsPerSample;
       char dataChunkId[4];
-      unsigned long dataChunkLength;
-   } waveHdr {};
+      uint32_t dataChunkLength;
+   } header {};
 
-   plat.bzero (&waveHdr, sizeof (waveHdr));
+   WaveEndianessHelper weh;
 
-   if (fp.read (&waveHdr, sizeof (WavHeader)) == 0) {
+   if (fp.read (&header, sizeof (WavHeader)) == 0) {
       logger.error ("Wave File %s - has wrong or unsupported format", filePath);
       return 0.0f;
    }
    fp.close ();
 
-   if (strncmp (waveHdr.chunkID, "WAVE", 4) != 0) {
+   if (!weh.isWave (header.wave)) {
       logger.error ("Wave File %s - has wrong wave chunk id", filePath);
       return 0.0f;
    }
 
-   if (waveHdr.dataChunkLength == 0) {
+   if (weh.read32 (header.dataChunkLength) == 0) {
       logger.error ("Wave File %s - has zero length!", filePath);
       return 0.0f;
    }
-   return static_cast <float> (waveHdr.dataChunkLength) / static_cast <float> (waveHdr.bytesPerSecond);
+
+   auto length = static_cast <float> (weh.read32 (header.dataChunkLength));
+   auto bps = static_cast <float> (weh.read16 (header.bitsPerSample)) / 8;
+   auto channels = static_cast <float> (weh.read16 (header.numChannels));
+   auto rate = static_cast <float> (weh.read32 (header.sampleRate));
+
+   return length / bps / channels / rate;
 }
 
 bool Game::isDedicated () {
@@ -342,7 +373,7 @@ const char *Game::getMapName () {
    return strings.format ("%s", globals->mapname.chars ());
 }
 
-Vector Game::getEntityWorldOrigin (edict_t *ent) {
+Vector Game::getEntityOrigin (edict_t *ent) {
    // this expanded function returns the vector origin of a bounded entity, assuming that any
    // entity that has a bounding box has its center at the center of the bounding box itself.
 
@@ -445,7 +476,7 @@ void Game::sendClientMessage (bool console, edict_t *ent, StringRef message) {
 
    // used to split messages
    auto sendTextMsg = [&console, &ent] (StringRef text) {
-      MessageWriter (MSG_ONE, msgs.id (NetMsg::TextMsg), nullptr, ent)
+      MessageWriter (MSG_ONE_UNRELIABLE, msgs.id (NetMsg::TextMsg), nullptr, ent)
          .writeByte (console ? HUD_PRINTCONSOLE : HUD_PRINTCENTER)
          .writeString (text.chars ());
    };
@@ -641,6 +672,17 @@ void Game::checkCvarsBounds () {
 
          // notify about that
          ctrl.msg ("Bogus value for cvar '%s', min is '%.1f' and max is '%.1f', and we're got '%s', value reverted to default '%.1f'.", var.reg.name, var.min, var.max, str, var.initial);
+      }
+   }
+
+   // special case for xash3d, by default engine is not calling startframe if no players on server, but our quota management and bot adding
+   // mechanism assumes that starframe is called even if no players on server, so, set the xash3d's sv_forcesimulating cvar to 1 in case it's not
+   if (is (GameFlags::Xash3D)) {
+      static cvar_t *sv_forcesimulating = engfuncs.pfnCVarGetPointer ("sv_forcesimulating");
+
+      if (sv_forcesimulating && sv_forcesimulating->value != 1.0f) {
+         game.print ("Force-enable Xash3D sv_forcesimulating cvar.");
+         engfuncs.pfnCVarSetFloat ("sv_forcesimulating", 1.0f);
       }
    }
 }
@@ -908,7 +950,19 @@ void Game::applyGameModes () {
 }
 
 void Game::slowFrame () {
-   if (m_slowFrame > time ()) {
+   const auto nextUpdate = cr::clamp (75.0f * globals->frametime, 0.5f, 1.0f);
+
+   // run something that is should run more
+   if (m_halfSecondFrame < time ()) {
+
+      // refresh bomb origin in case some plugin moved it out
+      graph.setBombOrigin ();
+
+      // update next update time
+      m_halfSecondFrame = nextUpdate * 0.25f + time ();
+   }
+
+   if (m_oneSecondFrame > time ()) {
       return;
    }
    ctrl.maintainAdminRights ();
@@ -919,11 +973,11 @@ void Game::slowFrame () {
    // check if we're need to autokill bots
    bots.maintainAutoKill ();
 
+      // update client pings
+   util.calculatePings ();
+
    // maintain leaders selection upon round start
    bots.maintainLeaders ();
-
-   // update client pings
-   util.calculatePings ();
 
    // initialize light levels
    graph.initLightLevels ();
@@ -937,12 +991,11 @@ void Game::slowFrame () {
    // check the cvar bounds
    checkCvarsBounds ();
 
-   // refresh bomb origin in case some plugin moved it out
-   graph.setBombOrigin ();
-
    // display welcome message
    util.checkWelcome ();
-   m_slowFrame = time () + 1.0f;
+
+   // update next update time
+   m_oneSecondFrame = nextUpdate + time ();
 }
 
 void Game::searchEntities (StringRef field, StringRef value, EntitySearch functor) {

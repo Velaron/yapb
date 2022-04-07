@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -101,7 +101,7 @@ public:
    void calculatePings ();
 
    // send modified pings to all the clients
-   void sendPings (edict_t *to);
+   void emitPings (edict_t *to);
 
    // installs the sendto function intreception
    void installSendTo ();
@@ -111,6 +111,9 @@ public:
 
    // checks if same model ommiting the models directory
    bool isModel (const edict_t *ent, StringRef model);
+
+   // get the current date and time as string
+   String getCurrentDateTime ();
 
 public:
 

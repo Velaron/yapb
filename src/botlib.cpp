@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -9,27 +9,33 @@
 
 ConVar cv_debug ("yb_debug", "0", "Enables or disables useful messages about bot states. Not required for end users.", true, 0.0f, 4.0f);
 ConVar cv_debug_goal ("yb_debug_goal", "-1", "Forces all alive bots to build path and go to the specified here graph node.", true, -1.0f, kMaxNodes);
-ConVar cv_user_follow_percent ("yb_user_follow_percent", "20", "Specifies the percent of bots, than can follow leader on each round start.", true, 0.0f, 100.0f);
-ConVar cv_user_max_followers ("yb_user_max_followers", "1", "Specifies how many bots can follow a single user.", true, 0.0f, static_cast <float> (kGameMaxPlayers / 2));
+ConVar cv_user_follow_percent ("yb_user_follow_percent", "20", "Specifies the percent of bots, that can follow leader on each round start.", true, 0.0f, 100.0f);
+ConVar cv_user_max_followers ("yb_user_max_followers", "1", "Specifies how many bots can follow a single user.", true, 0.0f, static_cast <float> (kGameMaxPlayers / 4));
 
 ConVar cv_jasonmode ("yb_jasonmode", "0", "If enabled, all bots will be forced only the knife, skipping weapon buying routines.");
 ConVar cv_radio_mode ("yb_radio_mode", "2", "Allows bots to use radio or chattter.\nAllowed values: '0', '1', '2'.\nIf '0', radio and chatter is disabled.\nIf '1', only radio allowed.\nIf '2' chatter and radio allowed.", true, 0.0f, 2.0f);
 
 ConVar cv_economics_rounds ("yb_economics_rounds", "1", "Specifies whether bots able to use team economics, like do not buy any weapons for whole team to keep money for better guns.");
 ConVar cv_walking_allowed ("yb_walking_allowed", "1", "Specifies whether bots able to use 'shift' if they thinks that enemy is near.");
-ConVar cv_camping_allowed ("yb_camping_allowed", "1", "Allows or disallows bots to camp. Doesn't affects bomb/hostage defending tasks");
+ConVar cv_camping_allowed ("yb_camping_allowed", "1", "Allows or disallows bots to camp. Doesn't affects bomb/hostage defending tasks.");
+
+ConVar cv_camping_time_min ("yb_camping_time_min", "15.0", "Lower bound of time from which time for camping is calculated", true, 5.0f, 90.0f);
+ConVar cv_camping_time_max ("yb_camping_time_max", "45.0", "Upper bound of time until which time for camping is calculated", true, 15.0f, 120.0f);
 
 ConVar cv_tkpunish ("yb_tkpunish", "1", "Allows or disallows bots to take revenge of teamkillers / team attacks.");
-ConVar cv_freeze_bots ("yb_freeze_bots", "0", "If enabled the bots think function is disabled, so bots will not move anywhere from their spawn spots.");
-ConVar cv_spraypaints ("yb_spraypaints", "1", "Allows or disallows the use of spay paints.");
+ConVar cv_freeze_bots ("yb_freeze_bots", "0", "If enabled, the bots think function is disabled, so bots will not move anywhere from their spawn spots.");
+ConVar cv_spraypaints ("yb_spraypaints", "1", "Allows or disallows the use of spray paints.");
 ConVar cv_botbuy ("yb_botbuy", "1", "Allows or disallows bots weapon buying routines.");
 ConVar cv_destroy_breakables_around ("yb_destroy_breakables_around", "1", "Allows bots to destroy breakables around him, even without touching with them.");
+ConVar cv_object_pickup_radius ("yb_object_pickup_radius", "450.0", "The radius on which bot searches world for new objects, items, and weapons.", true, 64.0f, 1024.0f);
 
 ConVar cv_chatter_path ("yb_chatter_path", "sound/radio/bot", "Specifies the paths for the bot chatter sound files.", false);
 ConVar cv_restricted_weapons ("yb_restricted_weapons", "", "Specifies semicolon separated list of weapons that are not allowed to buy / pickup.", false);
 
 ConVar cv_attack_monsters ("yb_attack_monsters", "0", "Allows or disallows bots to attack monsters.");
 ConVar cv_pickup_custom_items ("yb_pickup_custom_items", "0", "Allows or disallows bots to pickup custom items.");
+ConVar cv_ignore_objectives ("yb_ignore_objectives", "0", "Allows or disallows bots to do map objectives, i.e. plant/defuse bombs, and saves hostages.");
+ConVar cv_random_knife_attacks ("yb_random_knife_attacks", "1", "Allows or disallows the ability for random knife attacks when bot is rushing and no enemy is nearby.");
 
 // game console variables
 ConVar mp_c4timer ("mp_c4timer", nullptr, Var::GameRef);
@@ -90,7 +96,7 @@ bool Bot::seesItem (const Vector &destination, const char *classname) {
    game.testLine (getEyesPos (), destination, TraceIgnore::None, ent (), &tr);
 
    // check if line of sight to object is not blocked (i.e. visible)
-   if (tr.flFraction >= 0.95f && tr.pHit && tr.pHit != game.getStartEntity ()) {
+   if (tr.flFraction < 1.0f && tr.pHit) {
       return strcmp (tr.pHit->v.classname.chars (), classname) == 0;
    }
    return true;
@@ -153,7 +159,7 @@ void Bot::checkGrenadesThrow () {
          return;
       }
    }
-   float distance = (m_lastEnemyOrigin - pev->origin).length2d ();
+   float distance = m_lastEnemyOrigin.distance2d (pev->origin);
 
    // don't throw grenades at anything that isn't on the ground!
    if (!(m_lastEnemy->v.flags & FL_ONGROUND) && !m_lastEnemy->v.waterlevel && m_lastEnemyOrigin.z > pev->absmax.z) {
@@ -329,7 +335,7 @@ void Bot::avoidGrenades () {
       if (m_preventFlashing < game.time () && m_personality == Personality::Rusher && m_difficulty == Difficulty::Expert && strcmp (model, "flashbang.mdl") == 0) {
          // don't look at flash bang
          if (!(m_states & Sense::SeeingEnemy)) {
-            pev->v_angle.y = cr::normalizeAngles ((game.getEntityWorldOrigin (pent) - getEyesPos ()).angles ().y + 180.0f);
+            pev->v_angle.y = cr::normalizeAngles ((game.getEntityOrigin (pent) - getEyesPos ()).angles ().y + 180.0f);
 
             m_canChooseAimDirection = false;
             m_preventFlashing = game.time () + rg.get (1.0f, 2.0f);
@@ -345,8 +351,8 @@ void Bot::avoidGrenades () {
          }
 
          if (!(pent->v.flags & FL_ONGROUND)) {
-            float distance = (pent->v.origin - pev->origin).lengthSq ();
-            float distanceMoved = ((pent->v.origin + pent->v.velocity * getFrameInterval ()) - pev->origin).lengthSq ();
+            float distance = pent->v.origin.distanceSq (pev->origin);
+            float distanceMoved = pev->origin.distance (pent->v.origin + pent->v.velocity * getFrameInterval ());
 
             if (distanceMoved < distance && distance < cr::square (500.0f)) {
                const auto &dirToPoint = (pev->origin - pent->v.origin).normalize2d ();
@@ -364,7 +370,7 @@ void Bot::avoidGrenades () {
       }
       else if ((pent->v.flags & FL_ONGROUND) && strcmp (model, "smokegrenade.mdl") == 0) {
          if (isInFOV (pent->v.origin - getEyesPos ()) < pev->fov - 7.0f) {
-            float distance = (pent->v.origin - pev->origin).length ();
+            float distance = pent->v.origin.distance (pev->origin);
 
             // shrink bot's viewing distance to smoke grenade's distance
             if (m_viewDistance > distance) {
@@ -393,17 +399,33 @@ void Bot::checkBreakable (edict_t *touch) {
 }
 
 void Bot::checkBreakablesAround () {
-   if (!cv_destroy_breakables_around.bool_ () || usesKnife () || rg.chance (25) || !game.hasBreakables () || m_seeEnemyTime + 4.0f > game.time () || !game.isNullEntity (m_enemy) || !hasPrimaryWeapon ()) {
+   if (!m_buyingFinished || !cv_destroy_breakables_around.bool_ () || usesKnife () || rg.chance (25) || !game.hasBreakables () || m_seeEnemyTime + 4.0f > game.time () || !game.isNullEntity (m_enemy) || !hasPrimaryWeapon ()) {
       return;
    }
 
    // check if we're have some breakbles in 400 units range
    for (const auto &breakable : game.getBreakables ()) {
+      bool ignoreBreakable = false;
+
+      // check if it's blacklisted
+      for (const auto &ignored : m_ignoredBreakable) {
+         if (ignored == breakable) {
+            ignoreBreakable = true;
+            break;
+         }
+      }
+
+      // keep searching
+      if (ignoreBreakable) {
+         continue;
+      }
+
       if (!game.isShootableBreakable (breakable)) {
          continue;
       }
-      const auto &origin = game.getEntityWorldOrigin (breakable);
-      const auto lengthToObstacle = (origin - pev->origin).lengthSq ();
+
+      const auto &origin = game.getEntityOrigin (breakable);
+      const auto lengthToObstacle = origin.distanceSq (pev->origin);
 
       // too far, skip it
       if (lengthToObstacle > cr::square (400.0f)) {
@@ -415,7 +437,23 @@ void Bot::checkBreakablesAround () {
          continue;
       }
 
+      // maybe time to give up?
+      if (m_lastBreakable == breakable && m_breakableTime + 1.0f < game.time ()) {
+         m_ignoredBreakable.emplace (breakable);
+
+         m_breakableOrigin = nullptr;
+         m_lastBreakable = nullptr;
+         m_breakableEntity = nullptr;
+
+         continue;
+      }
+
       if (isInFOV (origin - getEyesPos ()) < pev->fov && seesEntity (origin)) {
+         if (m_breakableEntity != breakable) {
+            m_breakableTime = game.time ();
+            m_lastBreakable = breakable;
+         }
+
          m_breakableOrigin = origin;
          m_breakableEntity = breakable;
          m_campButtons = pev->button & IN_DUCK;
@@ -437,7 +475,7 @@ edict_t *Bot::lookupBreakable () {
 
       // check if this isn't a triggered (bomb) breakable and if it takes damage. if true, shoot the crap!
       if (game.isShootableBreakable (ent)) {
-         m_breakableOrigin = game.getEntityWorldOrigin (ent);
+         m_breakableOrigin = game.getEntityOrigin (ent);
          return ent;
       }
    }
@@ -447,7 +485,7 @@ edict_t *Bot::lookupBreakable () {
       auto ent = tr.pHit;
 
       if (game.isShootableBreakable (ent)) {
-         m_breakableOrigin = game.getEntityWorldOrigin (ent);
+         m_breakableOrigin = game.getEntityOrigin (ent);
          return ent;
       }
    }
@@ -489,7 +527,7 @@ void Bot::updatePickups () {
    }
 
    const auto &intresting = bots.getIntrestingEntities ();
-   const float radius = cr::square (500.0f);
+   const float radius = cr::square (cv_object_pickup_radius.float_ ());
 
    if (!game.isNullEntity (m_pickupItem)) {
       bool itemExists = false;
@@ -501,10 +539,10 @@ void Bot::updatePickups () {
          if (ent->v.effects & EF_NODRAW) {
             continue;
          }
-         const Vector &origin = game.getEntityWorldOrigin (ent);
+         const Vector &origin = game.getEntityOrigin (ent);
 
          // too far from us ?
-         if ((pev->origin - origin).lengthSq () > radius) {
+         if (pev->origin.distanceSq (origin) > radius) {
             continue;
          }
 
@@ -536,14 +574,14 @@ void Bot::updatePickups () {
       bool allowPickup = false; // assume can't use it until known otherwise
 
       // get the entity origin
-      const auto &origin = game.getEntityWorldOrigin (ent);
+      const auto &origin = game.getEntityOrigin (ent);
      
       if ((ent->v.effects & EF_NODRAW) || ent == m_itemIgnore || cr::abs (origin.z - pev->origin.z) > 96.0f) {
          continue; // someone owns this weapon or it hasn't respawned yet
       }
 
       // too far from us ?
-      if ((pev->origin - origin).lengthSq () > radius) {
+      if (pev->origin.distanceSq (origin) > radius) {
          continue;
       }
 
@@ -552,7 +590,7 @@ void Bot::updatePickups () {
 
       // check if line of sight to object is not blocked (i.e. visible)
       if (seesItem (origin, classname)) {
-         if (strncmp ("hostage_entity", classname, 14) == 0) {
+         if (strncmp ("hostage_entity", classname, 14) == 0 || strncmp ("monster_scientist", classname, 17) == 0) {
             allowPickup = true;
             pickupType = Pickup::Hostage;
          }
@@ -607,38 +645,38 @@ void Bot::updatePickups () {
                const bool isShotgun = weaponType == WeaponType::Shotgun;
                const bool isRifle = weaponType == WeaponType::Rifle || weaponType == WeaponType::ZoomRifle;
 
-               if (strcmp (model, "w_9mmarclip.mdl") == 0 && !isRifle) {
+               if (!isRifle && strcmp (model, "w_9mmarclip.mdl") == 0) {
                   allowPickup = false;
                }
-               else if (strcmp (model, "w_shotbox.mdl") == 0 && !isShotgun) {
+               else if (!isShotgun && strcmp (model, "w_shotbox.mdl") == 0) {
                   allowPickup = false;
                }
-               else if (strcmp (model, "w_9mmclip.mdl") == 0 && !isSubmachine) {
+               else if (!isSubmachine && strcmp (model, "w_9mmclip.mdl") == 0) {
                   allowPickup = false;
                }
-               else if (strcmp (model, "w_crossbow_clip.mdl") == 0 && !isSniperRifle) {
+               else if (!isSniperRifle && strcmp (model, "w_crossbow_clip.mdl") == 0) {
                   allowPickup = false;
                }
-               else if (strcmp (model, "w_chainammo.mdl") == 0 && primaryWeaponCarried != Weapon::M249) {
+               else if (primaryWeaponCarried != Weapon::M249 && strcmp (model, "w_chainammo.mdl") == 0) {
                   allowPickup = false;
                }
             }
             else if (m_isVIP || !rateGroundWeapon (ent)) {
                allowPickup = false;
             }
-            else if (strcmp (model, "medkit.mdl") == 0 && m_healthValue >= 100.0f) {
+            else if (m_healthValue >= 100.0f && strcmp (model, "medkit.mdl") == 0) {
                allowPickup = false;
             }
-            else if ((strcmp (model, "kevlar.mdl") == 0 || strcmp (model, "battery.mdl") == 0) && pev->armorvalue >= 100.0f) {
+            else if (pev->armorvalue >= 100.0f && (strcmp (model, "kevlar.mdl") == 0 || strcmp (model, "battery.mdl") == 0)) {
                allowPickup = false;
             }
-            else if (strcmp (model, "flashbang.mdl") == 0 && (pev->weapons & cr::bit (Weapon::Flashbang))) {
+            else if ((pev->weapons & cr::bit (Weapon::Flashbang)) && strcmp (model, "flashbang.mdl") == 0) {
                allowPickup = false;
             }
-            else if (strcmp (model, "hegrenade.mdl") == 0 && (pev->weapons & cr::bit (Weapon::Explosive))) {
+            else if ((pev->weapons & cr::bit (Weapon::Explosive)) && strcmp (model, "hegrenade.mdl") == 0) {
                allowPickup = false;
             }
-            else if (strcmp (model, "smokegrenade.mdl") == 0 && (pev->weapons & cr::bit (Weapon::Smoke))) {
+            else if ((pev->weapons & cr::bit (Weapon::Smoke)) && strcmp (model, "smokegrenade.mdl") == 0) {
                allowPickup = false;
             }
          }
@@ -730,11 +768,21 @@ void Bot::updatePickups () {
                         }
                      }
                   }
+
+                  // don't steal hostage from human teammate (hack)
+                  if (allowPickup) {
+                     for (auto &client : util.getClients ()) {
+                        if ((client.flags & ClientFlags::Used) && !(client.ent->v.flags & FL_FAKECLIENT) && (client.flags & ClientFlags::Alive) &&
+                            client.team == m_team && client.ent->v.origin.distanceSq (ent->v.origin) <= cr::square (240.0f)) {
+                           allowPickup = false;
+                           break;
+                        }
+                     }
+                  }
                }
             }
             else if (pickupType == Pickup::PlantedC4) {
                if (util.isAlive (m_enemy)) {
-                  allowPickup = false;
                   return;
                }
 
@@ -743,9 +791,6 @@ void Bot::updatePickups () {
 
                   // then start escape from bomb immediate
                   startTask (Task::EscapeFromBomb, TaskPri::EscapeFromBomb, kInvalidNodeIndex, 0.0f, true);
-
-                  // and no pickup
-                  allowPickup = false;
                   return;
                }
 
@@ -779,7 +824,7 @@ void Bot::updatePickups () {
                   }
                }
 
-               if ((pev->origin - origin).lengthSq () > cr::square (60.0f)) {
+               if (pev->origin.distanceSq (origin) > cr::square (60.0f)) {
                   
                   if (!graph.isNodeReacheable (pev->origin, origin)) {
                      allowPickup = false;
@@ -858,7 +903,7 @@ void Bot::getCampDirection (Vector *dest) {
 
    // check if the trace hit something...
    if (tr.flFraction < 1.0f) {
-      float length = (tr.vecEndPos - src).lengthSq ();
+      float length = tr.vecEndPos.distanceSq (src);
 
       if (length > 10000.0f) {
          return;
@@ -931,8 +976,8 @@ void Bot::instantChatter (int type) {
       return;
    }
 
-   auto playbackSound = conf.pickRandomFromChatterBank (type);
-   auto painSound = conf.pickRandomFromChatterBank (Chatter::DiePain);
+   const auto &playbackSound = conf.pickRandomFromChatterBank (type);
+   const auto &painSound = conf.pickRandomFromChatterBank (Chatter::DiePain);
 
    if (m_notKilled) {
       showChaterIcon (true);
@@ -1001,8 +1046,6 @@ void Bot::pushChatterMessage (int message) {
 void Bot::checkMsgQueue () {
    // this function checks and executes pending messages
 
-   extern ConVar mp_freezetime;
-
    // no new message?
    if (m_msgQueue.empty ()) {
       return;
@@ -1065,7 +1108,7 @@ void Bot::checkMsgQueue () {
       }
 
       // prevent teams from buying on fun maps
-      if (game.mapIs (MapFlags::KnifeArena | MapFlags::Fun)) {
+      if (game.mapIs (MapFlags::KnifeArena)) {
          m_buyState = BuyState::Done;
 
          if (game.mapIs (MapFlags::KnifeArena)) {
@@ -1246,17 +1289,7 @@ int Bot::pickBestWeapon (int *vec, int count, int moneySave) {
    bool needMoreRandomWeapon = (m_personality == Personality::Careful) || (rg.chance (25) && m_personality == Personality::Normal);
 
    if (needMoreRandomWeapon) {
-      auto pick = [] (const float factor) -> float {
-         union {
-            unsigned int u;
-            float f;
-         } cast {};
-         cast.f = factor;
-
-         return (static_cast <int> ((cast.u >> 23) & 0xff) - 127) * 0.3010299956639812f;
-      };
-
-      float buyFactor = (m_moneyAmount - static_cast <float> (moneySave)) / (16000.0f - static_cast <float> (moneySave)) * 3.0f;
+      auto buyFactor = (m_moneyAmount - static_cast <float> (moneySave)) / (16000.0f - static_cast <float> (moneySave)) * 3.0f;
 
       if (buyFactor < 1.0f) {
          buyFactor = 1.0f;
@@ -1266,7 +1299,7 @@ int Bot::pickBestWeapon (int *vec, int count, int moneySave) {
       for (int *begin = vec, *end = vec + count - 1; begin < end; ++begin, --end) {
          cr::swap (*end, *begin);
       }
-      return vec[static_cast <int> (static_cast <float> (count - 1) * pick (rg.get (1.0f, cr::powf (10.0f, buyFactor))) / buyFactor + 0.5f)];
+      return vec[static_cast <int> (static_cast <float> (count - 1) * cr::log10 (rg.get (1.0f, cr::powf (10.0f, buyFactor))) / buyFactor + 0.5f)];
    }
 
    int chance = 95;
@@ -1304,7 +1337,7 @@ void Bot::buyStuff () {
    }
 
    int count = 0, weaponCount = 0;
-   int choices[kNumWeapons];
+   int choices[kNumWeapons] {};
 
    // select the priority tab for this personality
    const int *pref = conf.getWeaponPrefs (m_personality) + kNumWeapons;
@@ -1712,7 +1745,7 @@ void Bot::overrideConditions () {
 
    // special handling, if we have a knife in our hands
    if ((bots.getRoundStartTime () + 6.0f > game.time () || !hasAnyWeapons ()) && usesKnife () && (util.isPlayer (m_enemy) || (cv_attack_monsters.bool_ () && util.isMonster (m_enemy)))) {
-      float length = (pev->origin - m_enemy->v.origin).length2d ();
+      float length = pev->origin.distance2d (m_enemy->v.origin);
 
       // do waypoint movement if enemy is not reachable with a knife
       if (length > 100.0f && (m_states & Sense::SeeingEnemy)) {
@@ -1906,7 +1939,7 @@ void Bot::filterTasks () {
          filter[Task::PickupItem].desire = 50.0f; // always pickup button
       }
       else {
-         float distance = (500.0f - (game.getEntityWorldOrigin (m_pickupItem) - pev->origin).length ()) * 0.2f;
+         float distance = (500.0f - pev->origin.distance (game.getEntityOrigin (m_pickupItem))) * 0.2f;
 
          if (distance > 50.0f) {
             distance = 50.0f;
@@ -1970,7 +2003,7 @@ void Bot::filterTasks () {
    
       // if half of the round is over, allow hunting
       if (getCurrentTaskId () != Task::EscapeFromBomb && game.isNullEntity (m_enemy) && bots.getRoundMidTime () < game.time () && !m_isUsingGrenade && m_currentNodeIndex != graph.getNearest (m_lastEnemyOrigin) && m_personality != Personality::Careful && !cv_ignore_enemies.bool_ ()) {
-         float desireLevel = 4096.0f - ((1.0f - tempAgression) * (m_lastEnemyOrigin - pev->origin).length ());
+         float desireLevel = 4096.0f - ((1.0f - tempAgression) * m_lastEnemyOrigin.distance (pev->origin));
 
          desireLevel = (100.0f * desireLevel) / 4096.0f;
          desireLevel -= retreatLevel;
@@ -2182,7 +2215,7 @@ bool Bot::isEnemyThreat () {
    }
 
    // if enemy is near or facing us directly
-   if ((m_enemy->v.origin - pev->origin).lengthSq () < cr::square (256.0f) || isInViewCone (m_enemy->v.origin)) {
+   if (m_enemy->v.origin.distanceSq (pev->origin) < cr::square (256.0f) || isInViewCone (m_enemy->v.origin)) {
       return true;
    }
    return false;
@@ -2203,7 +2236,7 @@ bool Bot::reactOnEnemy () {
       }
       int enemyIndex = graph.getNearest (m_enemy->v.origin);
 
-      auto lineDist = (m_enemy->v.origin - pev->origin).length ();
+      auto lineDist = m_enemy->v.origin.distance (pev->origin);
       auto pathDist = static_cast <float> (graph.getPathDist (ownIndex, enemyIndex));
 
       if (pathDist - lineDist > 112.0f || isOnLadder ()) {
@@ -2239,7 +2272,7 @@ void Bot::checkRadioQueue () {
       m_radioOrder = 0;
       return;
    }
-   float distance = (m_radioEntity->v.origin - pev->origin).length ();
+   float distance = m_radioEntity->v.origin.distance (pev->origin);
 
    switch (m_radioOrder) {
    case Radio::CoverMe:
@@ -2512,7 +2545,7 @@ void Bot::checkRadioQueue () {
                   }
 
                   auto enemy = client.ent;
-                  float curDist = (m_radioEntity->v.origin - enemy->v.origin).lengthSq ();
+                  float curDist = m_radioEntity->v.origin.distanceSq (enemy->v.origin);
 
                   if (curDist < nearestDistance) {
                      nearestDistance = curDist;
@@ -2614,7 +2647,7 @@ void Bot::checkRadioQueue () {
 
          // find nearest bomb waypoint to player
          for (auto &point : graph.m_goalPoints) {
-            distance = (graph[point].origin - m_radioEntity->v.origin).lengthSq ();
+            distance = graph[point].origin.distanceSq (m_radioEntity->v.origin);
 
             if (distance < minDistance) {
                minDistance = distance;
@@ -2667,7 +2700,7 @@ void Bot::checkRadioQueue () {
                   }
 
                   auto enemy = client.ent;
-                  float dist = (m_radioEntity->v.origin - enemy->v.origin).lengthSq ();
+                  float dist = m_radioEntity->v.origin.distanceSq (enemy->v.origin);
 
                   if (dist < nearestDistance) {
                      nearestDistance = dist;
@@ -2738,7 +2771,7 @@ void Bot::updateAimDir () {
    else if (flags & AimFlags::Grenade) {
       m_lookAt = m_throw;
 
-      float throwDistance = (m_throw - pev->origin).length ();
+      float throwDistance = m_throw.distance (pev->origin);
       float coordCorrection = 0.0f;
 
       if (throwDistance > 100.0f && throwDistance < 800.0f) {
@@ -2759,6 +2792,11 @@ void Bot::updateAimDir () {
    }
    else if (flags & AimFlags::Entity) {
       m_lookAt = m_entity;
+
+      // do not look at hostages legs
+      if (m_pickupType == Pickup::Hostage) {
+         m_lookAt.z += 48.0f;
+      }
    }
    else if (flags & AimFlags::LastEnemy) {
       m_lookAt = m_lastEnemyOrigin;
@@ -2814,7 +2852,7 @@ void Bot::updateAimDir () {
          return nullptr;
       };
 
-      if (m_moveToGoal && !m_isStuck && m_moveSpeed > getShiftSpeed () && !(pev->button & IN_DUCK) && m_currentNodeIndex != kInvalidNodeIndex && !(m_path->flags & (NodeFlag::Ladder | NodeFlag::Crouch)) && m_pathWalk.hasNext () && (pev->origin - m_destOrigin).lengthSq () < cr::square (160.0f)) {
+      if (m_moveToGoal && !m_isStuck && m_moveSpeed > getShiftSpeed () && !(pev->button & IN_DUCK) && m_currentNodeIndex != kInvalidNodeIndex && !(m_path->flags & (NodeFlag::Ladder | NodeFlag::Crouch)) && m_pathWalk.hasNext () && pev->origin.distanceSq (m_destOrigin) < cr::square (160.0f)) {
          auto nextPathIndex = m_pathWalk.next ();
 
          if (graph.isVisible (m_currentNodeIndex, nextPathIndex)) {
@@ -2832,7 +2870,7 @@ void Bot::updateAimDir () {
          auto dangerIndex = graph.getDangerIndex (m_team, m_currentNodeIndex, m_currentNodeIndex);
 
          if (graph.exists (dangerIndex) && graph.isVisible (m_currentNodeIndex, dangerIndex) && !(graph[dangerIndex].flags & NodeFlag::Crouch)) {
-            if ((graph[dangerIndex].origin - pev->origin).lengthSq () < cr::square (160.0f)) {
+            if (pev->origin.distanceSq (graph[dangerIndex].origin) < cr::square (160.0f)) {
                m_lookAt = m_destOrigin;
             }
             else {
@@ -2925,7 +2963,7 @@ void Bot::frame () {
    if (bots.isBombPlanted () && m_team == Team::CT && m_notKilled) {
       const Vector &bombPosition = graph.getBombOrigin ();
 
-      if (!m_hasProgressBar && getCurrentTaskId () != Task::EscapeFromBomb && (pev->origin - bombPosition).lengthSq () < cr::square (1540.0f) && !isBombDefusing (bombPosition)) {
+      if (!m_hasProgressBar && getCurrentTaskId () != Task::EscapeFromBomb && pev->origin.distanceSq (bombPosition) < cr::square (1540.0f) && !isBombDefusing (bombPosition)) {
          m_itemIgnore = nullptr;
          m_itemCheckTime = game.time ();
 
@@ -2942,7 +2980,7 @@ void Bot::frame () {
    }
 
    // clear enemy far away
-   if (!m_lastEnemyOrigin.empty () && !game.isNullEntity (m_lastEnemy) && (pev->origin - m_lastEnemyOrigin).lengthSq () >= cr::square (1600.0f)) {
+   if (!m_lastEnemyOrigin.empty () && !game.isNullEntity (m_lastEnemy) && pev->origin.distanceSq (m_lastEnemyOrigin) >= cr::square (1600.0f)) {
       m_lastEnemy = nullptr;
       m_lastEnemyOrigin = nullptr;
    }
@@ -2967,6 +3005,10 @@ void Bot::update () {
 
    if (m_team == Team::Terrorist && game.mapIs (MapFlags::Demolition)) {
       m_hasC4 = !!(pev->weapons & cr::bit (Weapon::C4));
+
+      if (m_hasC4 && cv_ignore_objectives.bool_ ()) {
+         m_hasC4 = false;
+      }
    }
 
    // is bot movement enabled
@@ -3049,22 +3091,13 @@ void Bot::normal_ () {
    // user forced a waypoint as a goal?
    if (debugGoal != kInvalidNodeIndex && getTask ()->data != debugGoal) {
       clearSearchNodes ();
+
       getTask ()->data = debugGoal;
-   }
-   
-   // stand still if reached debug goal
-   else if (m_currentNodeIndex == debugGoal) {
-      pev->button = 0;
-      ignoreCollision ();
-
-      m_moveSpeed = 0.0;
-      m_strafeSpeed = 0.0f;
-
-      return;
+      m_chosenGoalIndex = debugGoal;
    }
 
    // bots rushing with knife, when have no enemy (thanks for idea to nicebot project)
-   if (usesKnife () && (game.isNullEntity (m_lastEnemy) || !util.isAlive (m_lastEnemy)) && game.isNullEntity (m_enemy) && m_knifeAttackTime < game.time () && !hasShield () && numFriendsNear (pev->origin, 96.0f) == 0) {
+   if (cv_random_knife_attacks.bool_ () && usesKnife () && (game.isNullEntity (m_lastEnemy) || !util.isAlive (m_lastEnemy)) && game.isNullEntity (m_enemy) && m_knifeAttackTime < game.time () && !hasShield () && numFriendsNear (pev->origin, 96.0f) == 0) {
       if (rg.chance (40)) {
          pev->button |= IN_ATTACK;
       }
@@ -3145,7 +3178,7 @@ void Bot::normal_ () {
                if (!(m_states & (Sense::SeeingEnemy | Sense::HearingEnemy)) && !m_reloadState) {
                   m_reloadState = Reload::Primary;
                }
-               m_timeCamping = game.time () + rg.get (10.0f, 25.0f);
+               m_timeCamping = game.time () + rg.get (cv_camping_time_min.float_ (), cv_camping_time_max.float_ ());
                startTask (Task::Camp, TaskPri::Camp, kInvalidNodeIndex, m_timeCamping, true);
 
                m_camp = m_path->origin + m_path->start.forward () * 500.0f;
@@ -3169,7 +3202,7 @@ void Bot::normal_ () {
          if (game.mapIs (MapFlags::HostageRescue)) {
             // CT Bot has some hostages following?
             if (m_team == Team::CT && hasHostage ()) {
-               // and reached a Rescue Point?
+               // and reached a rescue point?
                if (m_path->flags & NodeFlag::Rescue) {
                   m_hostages.clear ();
                }
@@ -3242,13 +3275,17 @@ void Bot::normal_ () {
       ignoreCollision ();
 
       // did we already decide about a goal before?
-      auto destIndex = graph.exists (getTask ()->data) ? getTask ()->data : findBestGoal ();
+      auto currIndex = getTask ()->data;
+      auto destIndex = graph.exists (currIndex) && !isBannedNode (currIndex) && m_prevGoalIndex != currIndex ? currIndex : findBestGoal ();
 
       // check for existance (this is failover, for i.e. csdm, this should be not true with normal gameplay, only when spawned outside of waypointed area)
       if (!graph.exists (destIndex)) {
          destIndex = graph.getFarest (pev->origin, 512.0f);
       }
 
+      if (!graph.exists (cv_debug_goal.int_ ()) && graph.exists (currIndex) && m_prevGoalIndex == currIndex && !(graph[currIndex].flags & NodeFlag::Goal)) {
+         m_goalHistory.push (currIndex);
+      }
       m_prevGoalIndex = destIndex;
 
       // remember index
@@ -3258,7 +3295,7 @@ void Bot::normal_ () {
 
       // override with fast path
       if (game.mapIs (MapFlags::Demolition) && bots.isBombPlanted ()) {
-         pathSearchType = FindPath::Fast;
+         pathSearchType = rg.chance (60) ? FindPath::Fast : FindPath::Optimal;
       }
 
       // do pathfinding if it's not the current waypoint
@@ -3395,7 +3432,7 @@ void Bot::huntEnemy_ () {
             }
          }
 
-         if ((m_lastEnemyOrigin - pev->origin).lengthSq () < cr::square (512.0f)) {
+         if (m_lastEnemyOrigin.distanceSq (pev->origin) < cr::square (512.0f)) {
             m_moveSpeed = getShiftSpeed ();
          }
       }
@@ -3623,7 +3660,7 @@ void Bot::camp_ () {
             const Vector &dotB = (graph[i].origin - pev->origin).normalize2d ();
 
             if ((dotA | dotB) > 0.9f) {
-               int distance = static_cast <int> ((pev->origin - graph[i].origin).length ());
+               int distance = static_cast <int> (graph[i].origin.distance (pev->origin));
 
                if (numFoundPoints >= 3) {
                   for (int j = 0; j < 3; ++j) {
@@ -3907,7 +3944,7 @@ void Bot::defuseBomb_ () {
    m_strafeSpeed = 0.0f;
 
    // bot is reloading and we close enough to start defusing
-   if (m_isReloading && (bombPos - pev->origin).length2d () < 80.0f) {
+   if (m_isReloading && bombPos.distance2d (pev->origin) < 80.0f) {
       if (m_numEnemiesLeft == 0 || timeToBlowUp < fullDefuseTime + 7.0f || ((getAmmoInClip () > 8 && m_reloadState == Reload::Primary) || (getAmmoInClip () > 5 && m_reloadState == Reload::Secondary))) {
          int weaponIndex = bestWeaponCarried ();
 
@@ -3949,8 +3986,8 @@ void Bot::defuseBomb_ () {
          botStandOrigin = pev->origin;
       }
 
-      float duckLength = (m_entity - botDuckOrigin).lengthSq ();
-      float standLength = (m_entity - botStandOrigin).lengthSq ();
+      float duckLength = m_entity.distanceSq (botDuckOrigin);
+      float standLength = m_entity.distanceSq (botStandOrigin);
 
       if (duckLength > 5625.0f || standLength > 5625.0f) {
          if (standLength < duckLength) {
@@ -4033,7 +4070,7 @@ void Bot::followUser_ () {
       m_reloadState = Reload::Primary;
    }
 
-   if ((m_targetEntity->v.origin - pev->origin).lengthSq () > cr::square (130.0f)) {
+   if (m_targetEntity->v.origin.distanceSq (pev->origin) > cr::square (130.0f)) {
       m_followWaitTime = 0.0f;
    }
    else {
@@ -4113,7 +4150,7 @@ void Bot::throwExplosive_ () {
 
    ignoreCollision ();
 
-   if ((pev->origin - dest).lengthSq () < cr::square (400.0f)) {
+   if (pev->origin.distanceSq (dest) < cr::square (400.0f)) {
       // heck, I don't wanna blow up myself
       m_grenadeCheckTime = game.time () + kGrenadeCheckTime;
 
@@ -4180,7 +4217,7 @@ void Bot::throwFlashbang_ () {
 
    ignoreCollision ();
 
-   if ((pev->origin - dest).lengthSq () < cr::square (400.0f)) {
+   if (pev->origin.distanceSq (dest) < cr::square (400.0f)) {
       m_grenadeCheckTime = game.time () + kGrenadeCheckTime; // heck, I don't wanna blow up myself
 
       selectBestWeapon ();
@@ -4387,7 +4424,7 @@ void Bot::escapeFromBomb_ () {
       float safeRadius = rg.get (1513.0f, 2048.0f);
 
       for (int i = 0; i < graph.length (); ++i) {
-         if ((graph[i].origin - graph.getBombOrigin ()).length () < safeRadius || isOccupiedNode (i)) {
+         if (graph[i].origin.distance (graph.getBombOrigin ()) < safeRadius || isOccupiedNode (i)) {
             continue;
          }
          int pathDistance = graph.getPathDist (m_currentNodeIndex, i);
@@ -4458,13 +4495,13 @@ void Bot::pickupItem_ () {
 
       return;
    }
-   const Vector &dest = game.getEntityWorldOrigin (m_pickupItem);
+   const Vector &dest = game.getEntityOrigin (m_pickupItem);
 
    m_destOrigin = dest;
    m_entity = dest;
 
    // find the distance to the item
-   float itemDistance = (dest - pev->origin).length ();
+   float itemDistance = dest.distance (pev->origin);
 
    switch (m_pickupType) {
    case Pickup::DroppedC4:
@@ -4508,13 +4545,14 @@ void Bot::pickupItem_ () {
          else {
             // primary weapon
             int wid = bestWeaponCarried ();
+            bool niceWeapon = rateGroundWeapon (m_pickupItem);
             
-            if (wid == Weapon::Shield || wid > 6 || hasShield ()) {
+            if ((wid == Weapon::Shield || wid > 6 || hasShield ()) && niceWeapon) {
                selectWeaponById (wid);
                issueCommand ("drop");
             }
 
-            if (!wid) {
+            if (!wid || !niceWeapon) {
                m_itemIgnore = m_pickupItem;
                m_pickupItem = nullptr;
                m_pickupType = Pickup::None;
@@ -4591,6 +4629,62 @@ void Bot::pickupItem_ () {
             }
             m_hostages.push (m_pickupItem);
             m_pickupItem = nullptr;
+
+            completeTask ();
+
+            float minDistance = kInfiniteDistance;
+            int nearestHostageNodeIndex = kInvalidNodeIndex;
+
+            // find the nearest 'unused' hostage within the area
+            game.searchEntities (pev->origin, 768.0f, [&] (edict_t *ent) {
+               auto classname = ent->v.classname.chars ();
+
+               if (strncmp ("hostage_entity", classname, 14) != 0 && strncmp ("monster_scientist", classname, 17) != 0) {
+                  return EntitySearchResult::Continue;
+               }
+
+               // check if hostage is dead
+               if (game.isNullEntity (ent) || ent->v.health <= 0) {
+                  return EntitySearchResult::Continue;
+               }
+
+               // check if hostage is with a bot
+               for (const auto &other : bots) {
+                  if (other->m_notKilled) {
+                     for (const auto &hostage : other->m_hostages) {
+                        if (hostage == ent) {
+                           return EntitySearchResult::Continue;
+                        }
+                     }
+                  }
+               }
+
+               // check if hostage is with a human teammate (hack)
+               for (auto &client : util.getClients ()) {
+                  if ((client.flags & ClientFlags::Used) && !(client.ent->v.flags & FL_FAKECLIENT) && (client.flags & ClientFlags::Alive) &&
+                      client.team == m_team && client.ent->v.origin.distanceSq (ent->v.origin) <= cr::square (240.0f)) {
+                     return EntitySearchResult::Continue;
+                  }
+               }
+
+               int hostageNodeIndex = graph.getNearest (ent->v.origin);
+
+               if (graph.exists (hostageNodeIndex)) {
+                  float distance = graph[hostageNodeIndex].origin.distanceSq (pev->origin);
+
+                  if (distance < minDistance) {
+                     minDistance = distance;
+                     nearestHostageNodeIndex = hostageNodeIndex;
+                  }
+               }
+
+               return EntitySearchResult::Continue;
+            });
+
+            if (nearestHostageNodeIndex != kInvalidNodeIndex) {
+                clearTask (Task::MoveToPosition); // remove any move tasks
+                startTask (Task::MoveToPosition, TaskPri::MoveToPosition, nearestHostageNodeIndex, 0.0f, true);
+            }
          }
          ignoreCollision (); // also don't consider being stuck
       }
@@ -4640,7 +4734,7 @@ void Bot::pickupItem_ () {
    }
 }
 
-void Bot::executeTasks () {
+void Bot::tasks () {
    // this is core function that handle task execution
 
    auto func = getTask ()->func;
@@ -4737,7 +4831,7 @@ void Bot::logic () {
 
       // see how far bot has moved since the previous position...
       if (m_checkTerrain) {
-         movedDistance = (m_prevOrigin - pev->origin).length ();
+         movedDistance = m_prevOrigin.distance (pev->origin);
       }
 
       // save current position as previous
@@ -4796,7 +4890,7 @@ void Bot::logic () {
    avoidGrenades (); // avoid flyings grenades
    m_isUsingGrenade = false;
 
-   executeTasks (); // execute current task
+   tasks (); // execute current task
    updateAimDir (); // choose aim direction
    updateLookAngles (); // and turn to chosen aim direction
 
@@ -4958,7 +5052,7 @@ void Bot::showDebugOverlay () {
       return;
    }
    static float timeDebugUpdate = 0.0f;
-   static int index, goal, taskID;
+   static int index = kInvalidNodeIndex, goal = kInvalidNodeIndex, taskID = 0;
 
    static HashMap <int32, String> tasks;
    static HashMap <int32, String> personalities;
@@ -5073,11 +5167,15 @@ void Bot::showDebugOverlay () {
 }
 
 bool Bot::hasHostage () {
-   for (auto hostage : m_hostages) {
+   if (cv_ignore_objectives.bool_ ()) {
+      return false;
+   }
+
+   for (auto &hostage : m_hostages) {
       if (!game.isNullEntity (hostage)) {
 
          // don't care about dead hostages
-         if (hostage->v.health <= 0.0f || (pev->origin - hostage->v.origin).lengthSq () > cr::square (600.0f)) {
+         if (hostage->v.health <= 0.0f || pev->origin.distanceSq (hostage->v.origin) > cr::square (600.0f)) {
             hostage = nullptr;
             continue;
          }
@@ -5276,15 +5374,15 @@ void Bot::dropWeaponForUser (edict_t *user, bool discardC4) {
    // this function, asks bot to discard his current primary weapon (or c4) to the user that requsted it with /drop*
    // command, very useful, when i'm don't have money to buy anything... )
 
-   if (util.isAlive (user) && m_moneyAmount >= 2000 && hasPrimaryWeapon () && (user->v.origin - pev->origin).length () <= 450.0f) {
+   if (util.isAlive (user) && m_moneyAmount >= 2000 && hasPrimaryWeapon () && user->v.origin.distance (pev->origin) <= 450.0f) {
       m_aimFlags |= AimFlags::Entity;
       m_lookAt = user->v.origin;
 
-      if (discardC4) {
+      if (discardC4 && m_hasC4) {
          selectWeaponByName ("weapon_c4");
          issueCommand ("drop");
       }
-      else {
+      else if (!discardC4) {
          selectBestWeapon ();
          issueCommand ("drop");
       }
@@ -5509,7 +5607,7 @@ Vector Bot::isBombAudible () {
    }
 
    // we hear bomb if length greater than radius
-   if (desiredRadius < (pev->origin - bombOrigin).length2d ()) {
+   if (desiredRadius < pev->origin.distance2d (bombOrigin)) {
       return bombOrigin;
    }
    return nullptr;
@@ -5648,7 +5746,7 @@ bool Bot::isOutOfBombTimer () {
    const Vector &bombOrigin = graph.getBombOrigin ();
 
    // for terrorist, if timer is lower than 13 seconds, return true
-   if (timeLeft < 13.0f && m_team == Team::Terrorist && (bombOrigin - pev->origin).lengthSq () < cr::square (964.0f)) {
+   if (timeLeft < 13.0f && m_team == Team::Terrorist && bombOrigin.distanceSq (pev->origin) < cr::square (964.0f)) {
       return true;
    }
    bool hasTeammatesWithDefuserKit = false;
@@ -5656,7 +5754,7 @@ bool Bot::isOutOfBombTimer () {
    // check if our teammates has defusal kit
    for (const auto &bot : bots) {
       // search players with defuse kit
-      if (bot.get () != this && bot->m_team == Team::CT && bot->m_hasDefuser && (bombOrigin - bot->pev->origin).lengthSq () < cr::square (512.0f)) {
+      if (bot.get () != this && bot->m_team == Team::CT && bot->m_hasDefuser && bombOrigin.distanceSq (bot->pev->origin) < cr::square (512.0f)) {
          hasTeammatesWithDefuserKit = true;
          break;
       }
@@ -5694,7 +5792,7 @@ void Bot::updateHearing () {
       if (!game.checkVisibility (client.ent, set)) {
          continue;
       }
-      float distance = (client.noise.pos - pev->origin).length ();
+      float distance = client.noise.pos.distance (pev->origin);
 
       if (distance > client.noise.dist) {
          continue;
@@ -5742,9 +5840,9 @@ void Bot::updateHearing () {
          }
          else {
             // if bot had an enemy but the heard one is nearer, take it instead
-            float distance = (m_lastEnemyOrigin - pev->origin).lengthSq ();
+            float distance = m_lastEnemyOrigin.distanceSq (pev->origin);
 
-            if (distance > (player->v.origin - pev->origin).lengthSq () && m_seeEnemyTime + 2.0f < game.time ()) {
+            if (distance > player->v.origin.distanceSq (pev->origin) && m_seeEnemyTime + 2.0f < game.time ()) {
                m_lastEnemy = player;
                m_lastEnemyOrigin = player->v.origin;
             }
@@ -5753,7 +5851,6 @@ void Bot::updateHearing () {
             }
          }
       }
-      extern ConVar cv_shoots_thru_walls;
 
       // check if heard enemy can be seen
       if (checkBodyParts (player)) {
@@ -5814,7 +5911,7 @@ bool Bot::isBombDefusing (const Vector &bombOrigin) {
       }
 
       auto bot = bots[client.ent];
-      auto bombDistance = (client.origin - bombOrigin).lengthSq ();
+      auto bombDistance = client.origin.distanceSq (bombOrigin);
 
       if (bot && !bot->m_notKilled) {
          if (m_team != bot->m_team || bot->getCurrentTaskId () == Task::EscapeFromBomb) {

@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2021 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -9,8 +9,9 @@
 
 #include <hlsdk/extdll.h>
 #include <hlsdk/metamod.h>
+#include <hlsdk/physint.h>
 
-#include <crlib/cr-complete.h>
+#include <crlib/crlib.h>
 
 // use all the cr-library
 using namespace cr;
@@ -70,7 +71,7 @@ CR_DECLARE_SCOPED_ENUM (Menu,
    KickPage1,
    KickPage2,
    KickPage3,
-   KickPage4,
+   KickPage4
 )
 
 // bomb say string
@@ -579,7 +580,6 @@ struct Client {
    int ping; // when bot latency is enabled, client ping stored here
    int iconFlags[kGameMaxPlayers]; // flag holding chatter icons
    float iconTimestamp[kGameMaxPlayers]; // timers for chatter icons
-   bool pingUpdate; // update ping ?
    ClientNoise noise;
 };
 
@@ -682,6 +682,7 @@ private:
    float m_joinServerTime; // time when bot joined the game
    float m_playServerTime; // time bot spent in the game
    float m_changeViewTime {}; // timestamp to change look at while at freezetime
+   float m_breakableTime {}; // breakeble acquired time
 
    bool m_moveToGoal {}; // bot currently moving to goal??
    bool m_isStuck {}; // bot is stuck
@@ -714,6 +715,7 @@ private:
    edict_t *m_itemIgnore {}; // pointer to entity to ignore for pickup
    edict_t *m_liftEntity {}; // pointer to lift entity
    edict_t *m_breakableEntity {}; // pointer to breakable entity
+   edict_t *m_lastBreakable {}; // last acquired breakable
    edict_t *m_targetEntity {}; // the entity that the bot is trying to reach
    edict_t *m_avoidGrenade {}; // pointer to grenade entity to avoid
 
@@ -734,8 +736,10 @@ private:
    Vector m_desiredVelocity; // desired velocity for jump nodes
    Vector m_breakableOrigin; // origin of breakable
 
+   Array <edict_t *> m_ignoredBreakable; // list of ignored breakables
    Array <edict_t *> m_hostages; // pointer to used hostage entities
    Array <Route> m_routes; // pointer
+   Array <int32> m_goalHistory; // history of selected goals
 
    BinaryHeap <RouteTwin> m_routeQue;
    Path *m_path {}; // pointer to the current path node
@@ -812,6 +816,7 @@ private:
    bool checkChatKeywords (String &reply);
    bool isReplyingToChat ();
    bool isReachableNode (int index);
+   bool isBannedNode (int index);
    bool updateLiftHandling ();
    bool updateLiftStates ();
    bool canRunHeavyWeight ();
@@ -872,7 +877,7 @@ private:
    void selectWeaponById (int num);
 
    void completeTask ();
-   void executeTasks ();
+   void tasks ();
    void trackEnemies ();
    void choiceFreezetimeEntity ();
 
@@ -897,7 +902,7 @@ private:
    void pickupItem_ ();
    void shootBreakable_ ();
 
-   edict_t *lookupButton (const char *targetName);
+   edict_t *lookupButton (const char *target);
    edict_t *lookupBreakable ();
    edict_t *correctGrenadeVelocity (const char *model);
 
@@ -1042,6 +1047,7 @@ public:
    void takeDamage (edict_t *inflictor, int damage, int armor, int bits);
    void showDebugOverlay ();
    void newRound ();
+   void resetPathSearchType ();
    void enteredBuyZone (int buyState);
    void pushMsgQueue (int message);
    void prepareChatMessage (StringRef message);
@@ -1134,8 +1140,8 @@ public:
    }
 
    // get the bot last trace result
-   TraceResult *getLastTraceResult (TraceChannel channel) {
-      return &m_lastTrace[channel];
+   TraceResult &getLastTraceResult (TraceChannel channel) {
+      return m_lastTrace[channel];
    }
 
    // prints debug message
@@ -1147,17 +1153,18 @@ public:
    template <typename ...Args> void issueCommand (const char *fmt, Args &&...args);
 };
 
-#include <config.h>
-#include <support.h>
-#include <message.h>
-#include <engine.h>
-#include <manager.h>
-#include <control.h>
+#include "config.h"
+#include "support.h"
+#include "message.h"
+#include "engine.h"
+#include "manager.h"
+#include "control.h"
 
 // very global convars
 extern ConVar cv_jasonmode;
 extern ConVar cv_radio_mode;
 extern ConVar cv_ignore_enemies;
+extern ConVar cv_ignore_objectives;
 extern ConVar cv_chat;
 extern ConVar cv_language;
 extern ConVar cv_show_latency;
@@ -1168,6 +1175,20 @@ extern ConVar cv_quota;
 extern ConVar cv_difficulty;
 extern ConVar cv_attack_monsters;
 extern ConVar cv_pickup_custom_items;
+extern ConVar cv_economics_rounds;
+extern ConVar cv_shoots_thru_walls;
+extern ConVar cv_debug;
+extern ConVar cv_debug_goal;
+extern ConVar cv_save_bots_names;
+extern ConVar cv_random_knife_attacks;
+
+extern ConVar mp_freezetime;
+extern ConVar mp_roundtime;
+extern ConVar mp_timelimit;
+extern ConVar mp_limitteams;
+extern ConVar mp_autoteambalance;
+extern ConVar mp_footsteps;
+extern ConVar mp_startmoney;
 
 // execute client command helper
 template <typename ...Args> void Bot::issueCommand (const char *fmt, Args &&...args) {
