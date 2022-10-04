@@ -279,7 +279,8 @@ int BotControl::cmdNode () {
       "save",
       "load",
       "help",
-      "erase"
+      "erase",
+      "fileinfo"
    };
 
    // check if cmd is allowed on dedicated server
@@ -331,6 +332,7 @@ int BotControl::cmdNode () {
       addGraphCmd ("teleport", "teleport [index]", "Teleports player to specified node index.", &BotControl::cmdNodeTeleport);
       addGraphCmd ("upload", "upload", "Uploads created graph to graph database.", &BotControl::cmdNodeUpload);
       addGraphCmd ("stats", "stats [noarguments]", "Shows the stats about node types on the map.", &BotControl::cmdNodeShowStats);
+      addGraphCmd ("fileinfo", "fileinfo [noarguments]", "Shows basic information about graph file.", &BotControl::cmdNodeFileInfo);
 
       // add path commands
       addGraphCmd ("path_create", "path_create [noarguments]", "Opens and displays path creation menu.", &BotControl::cmdNodePathCreate);
@@ -854,9 +856,13 @@ int BotControl::cmdNodeIterateCamp () {
 }
 
 int BotControl::cmdNodeShowStats () {
-   enum args { graph_cmd = 1 };
-
    graph.showStats ();
+
+   return BotCommandResult::Handled;
+}
+
+int BotControl::cmdNodeFileInfo () {
+   graph.showFileInfo ();
 
    return BotCommandResult::Handled;
 }
@@ -1571,6 +1577,10 @@ bool BotControl::executeCommands () {
    // do not allow to execute stuff for non admins
    if (m_ent != game.getLocalEntity () && !(client.flags & ClientFlags::Admin)) {
       msg ("Access to %s commands is restricted.", product.name);
+
+      // reset issuer, but returns "true" to suppress "unknown command" message
+      setIssuer (nullptr);
+
       return true;
    }
 
@@ -1919,20 +1929,25 @@ void BotControl::handleEngineCommands () {
    executeCommands ();
 }
 
-bool BotControl::handleClientCommands (edict_t *ent) {
+bool BotControl::handleClientSideCommandsWrapper (edict_t *ent, bool isMenus) {
    collectArgs ();
    setIssuer (ent);
 
-   setFromConsole (true);
-   return executeCommands ();
+   setFromConsole (!isMenus);
+   auto result = isMenus ? executeMenus () : executeCommands ();
+
+   if (!result) {
+      setIssuer (nullptr);
+   }
+   return result;
+}
+
+bool BotControl::handleClientCommands (edict_t *ent) {
+   return handleClientSideCommandsWrapper (ent, false);
 }
 
 bool BotControl::handleMenuCommands (edict_t *ent) {
-   collectArgs ();
-   setIssuer (ent);
-
-   setFromConsole (false);
-   return ctrl.executeMenus ();
+   return handleClientSideCommandsWrapper (ent, true);
 }
 
 void BotControl::enableDrawModels (bool enable) {

@@ -658,8 +658,6 @@ void BotGraph::add (int type, const Vector &pos) {
 
       // store the origin (location) of this node
       path->origin = newOrigin;
-      addToBucket (newOrigin, index);
-
       path->start = nullptr;
       path->end = nullptr;
       
@@ -869,7 +867,6 @@ void BotGraph::erase (int target) {
          }
       }
    }
-   eraseFromBucket (path.origin, index);
    m_paths.remove (path);
 
    game.playSound (m_editor, "weapons/mine_activate.wav");
@@ -1135,6 +1132,23 @@ void BotGraph::showStats () {
    ctrl.msg ("Block Hostage Points: %d - Sniper Points: %d", noHostagePoints, sniperPoints);
 }
 
+void BotGraph::showFileInfo () {
+   ctrl.msg ("header:");
+   ctrl.msg ("  magic: %d", m_graphHeader.magic);
+   ctrl.msg ("  version: %d", m_graphHeader.version);
+   ctrl.msg ("  node_count: %d", m_graphHeader.length);
+   ctrl.msg ("  compressed_size: %dkB", m_graphHeader.compressed / 1024);
+   ctrl.msg ("  uncompressed_size: %dkB", m_graphHeader.uncompressed / 1024);
+   ctrl.msg ("  options: %d", m_graphHeader.options); // display as string ?
+
+   ctrl.msg ("");
+
+   ctrl.msg ("extensions:");
+   ctrl.msg ("  author: %s", m_extenHeader.author);
+   ctrl.msg ("  modified_by: %s", m_extenHeader.modified);
+   ctrl.msg ("  bsp_size: %d", m_extenHeader.mapSize);
+}
+
 void BotGraph::calculatePathRadius (int index) {
    // calculate "wayzones" for the nearest node  (meaning a dynamic distance area to vary node origin)
 
@@ -1391,7 +1405,7 @@ void BotGraph::initNarrowPlaces () {
    constexpr int32 kNarrowPlacesMinGraphVersion = 2;
 
    // if version 2 or higher, narrow places already initialized and saved into file
-   if (m_version >= kNarrowPlacesMinGraphVersion) {
+   if (m_graphHeader.version >= kNarrowPlacesMinGraphVersion) {
       m_narrowChecked = true;
       return;
    }
@@ -1563,7 +1577,7 @@ bool BotGraph::convertOldFormat () {
    if (!m_paths.empty ()) {
       ctrl.msg ("Converting old PWF to new format Graph.");
 
-      m_tempStrings = header.author;
+      m_graphAuthor = header.author;
       return saveGraphData ();
    }
    return true;
@@ -1730,16 +1744,16 @@ template <typename U> bool BotGraph::loadStorage (StringRef ext, StringRef name,
    }
 
    // check the version
-   if (hdr.version > version) {
-      if (tryReload ()) {
-         return true;
-      }
+   if (hdr.version > version && isGraph) {
+       ctrl.msg ("Graph version mismatch %s (filename: '%s'). Version number differs (got: '%d', need: '%d') Please, upgrade %s.", name, filename, hdr.version, version, product.name);
+   }
+   else if (hdr.version > version && !isGraph) {
       return raiseLoadingError (isGraph, file, "Damaged %s (filename: '%s'). Version number differs (got: '%d', need: '%d').", name, filename, hdr.version, version);
    }
 
    // save graph version
    if (isGraph) {
-      m_version = hdr.version;
+      memcpy (&m_graphHeader, &hdr, sizeof (StorageHeader));
    }
 
    // check the storage type
@@ -1768,7 +1782,20 @@ template <typename U> bool BotGraph::loadStorage (StringRef ext, StringRef name,
 
          // author of graph.. save
          if ((hdr.options & StorageOption::Exten) && exten != nullptr) {
-            file.read (exten, sizeof (ExtenHeader));
+            auto extenSize = sizeof (ExtenHeader);
+            auto actuallyRead = file.read (exten, extenSize) * extenSize;
+
+            if (isGraph) {
+               strings.copy (m_extenHeader.author, exten->author, cr::bufsize (exten->author));
+
+               if (extenSize <= actuallyRead) {
+                  strings.copy (m_extenHeader.modified, exten->modified, cr::bufsize (exten->modified));
+               }
+               else {
+                  strings.copy (m_extenHeader.modified, "(none)", cr::bufsize (exten->modified));
+               }
+               m_extenHeader.mapSize = exten->mapSize;
+            }
          }
          ctrl.msg ("Successfully loaded Bots %s data v%d (%d/%.2fMB).", name, hdr.version, m_paths.length (), static_cast <float> (data.capacity () * sizeof (U)) / 1024.0f / 1024.0f);
          file.close ();
@@ -1785,6 +1812,9 @@ bool BotGraph::loadGraphData () {
    ExtenHeader exten {};
    int32 outOptions = 0;
 
+   m_graphHeader = {};
+   m_extenHeader = {};
+
    // check if loaded
    bool dataLoaded = loadStorage <Path> ("graph", "Graph", StorageOption::Graph, StorageVersion::Graph, m_paths, &exten, &outOptions);
 
@@ -1798,11 +1828,17 @@ bool BotGraph::loadGraphData () {
       }
 
       if ((outOptions & StorageOption::Official) || strncmp (exten.author, "official", 8) == 0 || strlen (exten.author) < 2) {
-         m_tempStrings.assign (product.folder);
+         m_graphAuthor.assign (product.folder);
       }
       else {
-         m_tempStrings.assign (exten.author);
+         m_graphAuthor.assign (exten.author);
       }
+      StringRef modified = exten.modified;
+
+      if (!modified.empty () && !modified.contains ("(none)")) {
+         m_graphModified.assign (exten.modified);
+      }
+
       initNodesTypes ();
       loadPathMatrix ();
       loadVisibility ();
@@ -1830,8 +1866,8 @@ bool BotGraph::saveGraphData () {
    auto options = StorageOption::Graph | StorageOption::Exten;
    String author;
 
-   if (game.isNullEntity (m_editor) && !m_tempStrings.empty ()) {
-      author = m_tempStrings;
+   if (game.isNullEntity (m_editor) && !m_graphAuthor.empty ()) {
+      author = m_graphAuthor;
 
       if (!game.isDedicated ()) {
          options |= StorageOption::Recovered;
@@ -1850,7 +1886,16 @@ bool BotGraph::saveGraphData () {
    }
 
    ExtenHeader exten {};
-   strings.copy (exten.author, author.chars (), cr::bufsize (exten.author));
+
+   // only modify the author if no author currenlty assigned to graph file
+   if (m_graphAuthor.empty ()) {
+      strings.copy (exten.author, author.chars (), cr::bufsize (exten.author));
+   }
+   else {
+      strings.copy (exten.author, m_extenHeader.author, cr::bufsize (exten.author));
+   }
+
+   strings.copy (exten.modified, author.chars (), cr::bufsize (exten.author)); // always update modified by
    exten.mapSize = getBspSize ();
 
    // ensure narrow places saved into file
@@ -2887,7 +2932,6 @@ BotGraph::BotGraph () {
    m_rescuePoints.clear ();
    m_sniperPoints.clear ();
 
-   m_version = StorageVersion::Graph;
    m_loadAttempts = 0;
    m_editFlags = 0;
 

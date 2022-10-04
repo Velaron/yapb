@@ -34,6 +34,7 @@ ConVar cv_restricted_weapons ("yb_restricted_weapons", "", "Specifies semicolon 
 
 ConVar cv_attack_monsters ("yb_attack_monsters", "0", "Allows or disallows bots to attack monsters.");
 ConVar cv_pickup_custom_items ("yb_pickup_custom_items", "0", "Allows or disallows bots to pickup custom items.");
+ConVar cv_pickup_best ("yb_pickup_best", "1", "Allows or disallows bots to pickup best weapons.");
 ConVar cv_ignore_objectives ("yb_ignore_objectives", "0", "Allows or disallows bots to do map objectives, i.e. plant/defuse bombs, and saves hostages.");
 ConVar cv_random_knife_attacks ("yb_random_knife_attacks", "1", "Allows or disallows the ability for random knife attacks when bot is rushing and no enemy is nearby.");
 
@@ -519,7 +520,7 @@ void Bot::updatePickups () {
    // this function finds Items to collect or use in the near of a bot
 
    // don't try to pickup anything while on ladder or trying to escape from bomb...
-   if (isOnLadder () || getCurrentTaskId () == Task::EscapeFromBomb || cv_jasonmode.bool_ () || !bots.hasIntrestingEntities ()) {
+   if (isOnLadder () || getCurrentTaskId () == Task::EscapeFromBomb || !cv_pickup_best.bool_ () || cv_jasonmode.bool_ () || !bots.hasIntrestingEntities ()) {
       m_pickupItem = nullptr;
       m_pickupType = Pickup::None;
 
@@ -2215,7 +2216,7 @@ bool Bot::isEnemyThreat () {
    }
 
    // if enemy is near or facing us directly
-   if (m_enemy->v.origin.distanceSq (pev->origin) < cr::square (256.0f) || isInViewCone (m_enemy->v.origin)) {
+   if (m_enemy->v.origin.distanceSq (pev->origin) < cr::square (256.0f) || (!usesKnife () && isInViewCone (m_enemy->v.origin))) {
       return true;
    }
    return false;
@@ -3000,10 +3001,6 @@ void Bot::update () {
    m_team = game.getTeam (ent ());
    m_healthValue = cr::clamp (pev->health, 0.0f, 100.0f);
 
-   if (game.mapIs (MapFlags::Assassination) && !m_isVIP) {
-      m_isVIP = util.isPlayerVIP (ent ());
-   }
-
    if (m_team == Team::Terrorist && game.mapIs (MapFlags::Demolition)) {
       m_hasC4 = !!(pev->weapons & cr::bit (Weapon::C4));
 
@@ -3690,7 +3687,16 @@ void Bot::camp_ () {
          }
       }
       else {
-         m_camp = graph[findCampingDirection ()].origin;
+         if (!game.isNullEntity (m_lastEnemy)) {
+            auto lastEnemyNearestIndex = graph.getNearest (m_lastEnemy->v.origin);
+
+            if (!util.isAlive (m_lastEnemy) && rg.get (1, 3) == 1 && graph.isVisible (m_currentNodeIndex, lastEnemyNearestIndex)) {
+               m_camp = graph[lastEnemyNearestIndex].origin;
+            }
+         }
+         else {
+            m_camp = graph[findCampingDirection ()].origin;
+         }
       }
    }
    // press remembered crouch button
