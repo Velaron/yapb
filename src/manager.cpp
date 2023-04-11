@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -8,6 +8,7 @@
 #include <yapb.h>
 
 ConVar cv_autovacate ("yb_autovacate", "1", "Kick bots to automatically make room for human players.");
+ConVar cv_kick_after_player_connect ("yb_kick_after_player_connect", "1", "Kick the bot immediately when a human player joins the server (yb_autovacate must be enabled).");
 
 ConVar cv_quota ("yb_quota", "9", "Specifies the number bots to be added to the game.", true, 0.0f, static_cast <float> (kGameMaxPlayers));
 ConVar cv_quota_mode ("yb_quota_mode", "normal", "Specifies the type of quota.\nAllowed values: 'normal', 'fill', and 'match'.\nIf 'fill', the server will adjust bots to keep N players in the game, where N is yb_quota.\nIf 'match', the server will maintain a 1:N ratio of humans to bots, where N is yb_quota_match.", false);
@@ -36,7 +37,14 @@ ConVar cv_botskin_ct ("yb_botskin_ct", "0", "Specifies the bots wanted skin for 
 ConVar cv_ping_base_min ("yb_ping_base_min", "7", "Lower bound for base bot ping shown in scoreboard upon creation.", true, 0.0f, 100.0f);
 ConVar cv_ping_base_max ("yb_ping_base_max", "34", "Upper bound for base bot ping shown in scoreboard upon creation.", true, 0.0f, 100.0f);
 
+ConVar cv_quota_adding_interval ("yb_quota_adding_interval", "0.10", "Interval in which bots are added to the game.", true, 0.10f, 1.0f);
+ConVar cv_quota_maintain_interval ("yb_quota_maintain_interval", "0.40", "Interval on which overall bot quota are checked.", true, 0.40f, 2.0f);
+
 ConVar cv_language ("yb_language", "en", "Specifies the language for bot messages and menus.", false);
+
+ConVar cv_rotate_bots ("yb_rotate_bots", "0", "Randomly disconnect and connect bots, simulating players join/quit.");
+ConVar cv_rotate_stay_min ("yb_rotate_stay_min", "360.0", "Specifies minimum amount of seconds bot keep connected, if rotation active.", true, 120.0f, 7200.0f);
+ConVar cv_rotate_stay_max ("yb_rotate_stay_max", "3600.0", "Specifies maximum amount of seconds bot keep connected, if rotation active.", true, 1800.0f, 14400.0f);
 
 ConVar mp_limitteams ("mp_limitteams", nullptr, Var::GameRef);
 ConVar mp_autoteambalance ("mp_autoteambalance", nullptr, Var::GameRef);
@@ -124,7 +132,7 @@ void BotManager::touchKillerEntity (Bot *bot) {
    KeyValueData kv {};
    kv.szClassName = const_cast <char *> (prop.classname.chars ());
    kv.szKeyName = "damagetype";
-   kv.szValue = const_cast <char *> (strings.format ("%d", cr::bit (4)));
+   kv.szValue = strings.format ("%d", cr::bit (4));
    kv.fHandled = HLFalse;
 
    MDLL_KeyValue (m_killerEntity, &kv);
@@ -163,7 +171,7 @@ BotCreateResult BotManager::create (StringRef name, int difficulty, int personal
    }
 
    // don't allow creating bots with changed graph (distance tables are messed up)
-   else if (graph.hasChanged ())  {
+   else if (graph.hasChanged ()) {
       ctrl.msg ("Graph has been changed. Load graph again...");
       return BotCreateResult::GraphError;
    }
@@ -235,6 +243,9 @@ BotCreateResult BotManager::create (StringRef name, int difficulty, int personal
    // assign owner of bot name
    if (botName != nullptr) {
       botName->usedBy = index; // save by who name is used
+   }
+   else {
+      conf.setBotNameUsed (index, resultName);
    }
    m_bots.push (cr::move (object));
 
@@ -357,7 +368,7 @@ void BotManager::maintainQuota () {
          m_addRequests.clear ();
          cv_quota.set (getBotCount ());
       }
-      m_maintainTime = game.time () + 0.10f;
+      m_maintainTime = game.time () + cv_quota_adding_interval.float_ ();
    }
 
    // now keep bot number up to date
@@ -391,7 +402,12 @@ void BotManager::maintainQuota () {
    int maxClients = game.maxClients ();
 
    if (cv_autovacate.bool_ ()) {
-      desiredBotCount = cr::min <int> (desiredBotCount, maxClients - (humanPlayersInGame + 1));
+      if (cv_kick_after_player_connect.bool_ ()) {
+         desiredBotCount = cr::min <int> (desiredBotCount, maxClients - (totalHumansInGame + 1));
+      }
+      else {
+         desiredBotCount = cr::min <int> (desiredBotCount, maxClients - (humanPlayersInGame + 1));
+      }
    }
    else {
       desiredBotCount = cr::min <int> (desiredBotCount, maxClients - humanPlayersInGame);
@@ -430,7 +446,7 @@ void BotManager::maintainQuota () {
          m_saveBotNames.clear ();
       }
    }
-   m_quotaMaintainTime = game.time () + 0.40f;
+   m_quotaMaintainTime = game.time () + cv_quota_maintain_interval.float_ ();
 }
 
 void BotManager::maintainLeaders () {
@@ -470,7 +486,7 @@ void BotManager::maintainAutoKill () {
    if (!totalHumans) {
       return;
    }
-   
+
    for (const auto &bot : m_bots) {
       if (bot->m_notKilled) {
          ++aliveBots;
@@ -563,7 +579,7 @@ void BotManager::serverFill (int selection, int personality, int difficulty, int
    else {
       selection = 5;
    }
-   char teams[6][12] = {"", {"Terrorists"}, {"CTs"}, "", "", {"Random"}, };
+   char teams[6][12] = { "", {"Terrorists"}, {"CTs"}, "", "", {"Random"}, };
    auto toAdd = numToAdd == -1 ? maxClients - (getHumansCount () + getBotCount ()) : numToAdd;
 
    for (int i = 0; i <= toAdd; ++i) {
@@ -700,7 +716,7 @@ bool BotManager::kickRandom (bool decQuota, Team fromTeam) {
    return false;
 }
 
- void BotManager::setLastWinner (int winner) {
+void BotManager::setLastWinner (int winner) {
    m_lastWinner = winner;
    m_roundOver = true;
 
@@ -745,8 +761,8 @@ void BotManager::setWeaponMode (int selection) {
       {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 0, -1, 1, -1, -1}, // Snipers only
       {-1, -1, -1, 2, 2, 0, 1, 1, 1, 1, 1, 1, 0, 2, 0, -1, 1, 0, 1, 1, 0, 0, -1, 1, 1, 1} // Standard
    };
-   constexpr char modes[7][12] = {{"Knife"}, {"Pistol"}, {"Shotgun"}, {"Machine Gun"}, {"Rifle"}, {"Sniper"}, {"Standard"}};
-   
+   constexpr char modes[7][12] = { {"Knife"}, {"Pistol"}, {"Shotgun"}, {"Machine Gun"}, {"Rifle"}, {"Sniper"}, {"Standard"} };
+
    // get the raw weapons array
    auto tab = conf.getRawWeapons ();
 
@@ -763,10 +779,10 @@ void BotManager::setWeaponMode (int selection) {
 void BotManager::listBots () {
    // this function list's bots currently playing on the server
 
-   ctrl.msg ("%-3.5s\t%-19.16s\t%-10.12s\t%-3.4s\t%-3.4s\t%-3.4s\t%-3.5s", "index", "name", "personality", "team", "difficulty", "frags", "alive");
+   ctrl.msg ("%-3.5s\t%-19.16s\t%-10.12s\t%-3.4s\t%-3.4s\t%-3.4s\t%-3.5s\t%-3.8s", "index", "name", "personality", "team", "difficulty", "frags", "alive", "timeleft");
 
-   for (const auto &bot : bots) {;
-      ctrl.msg ("[%-3.1d]\t%-19.16s\t%-10.12s\t%-3.4s\t%-3.1d\t%-3.1d\t%-3.4s", bot->index (), bot->pev->netname.chars (), bot->m_personality == Personality::Rusher ? "rusher" : bot->m_personality == Personality::Normal ? "normal" : "careful", bot->m_team == Team::CT ? "CT" : "T", bot->m_difficulty, static_cast <int> (bot->pev->frags), bot->m_notKilled ? "yes" : "no");
+   for (const auto &bot : bots) {
+      ctrl.msg ("[%-3.1d]\t%-19.16s\t%-10.12s\t%-3.4s\t%-3.1d\t%-3.1d\t%-3.4s\t%-3.0f secs", bot->index (), bot->pev->netname.chars (), bot->m_personality == Personality::Rusher ? "rusher" : bot->m_personality == Personality::Normal ? "normal" : "careful", bot->m_team == Team::CT ? "CT" : "T", bot->m_difficulty, static_cast <int> (bot->pev->frags), bot->m_notKilled ? "yes" : "no", cv_rotate_bots.bool_ () ? bot->m_stayTime - game.time () : 0.0f);
    }
    ctrl.msg ("%d bots", m_bots.length ());
 }
@@ -783,7 +799,7 @@ float BotManager::getConnectTime (StringRef name, float original) {
 }
 
 float BotManager::getAverageTeamKPD (bool calcForBots) {
-   Twin <float, int32> calc {};
+   Twin <float, int32_t> calc {};
 
    for (const auto &client : util.getClients ()) {
       if (!(client.flags & ClientFlags::Used)) {
@@ -802,7 +818,7 @@ float BotManager::getAverageTeamKPD (bool calcForBots) {
    }
 
    if (calc.second > 0) {
-      return calc.first / calc.second;
+      return calc.first / static_cast <float> (calc.second);
    }
    return 0.0f;
 }
@@ -896,12 +912,8 @@ void BotManager::updateBotDifficulties () {
 }
 
 void BotManager::balanceBotDifficulties () {
-   // with nightmare difficulty, there is no balance
-   if (cv_whose_your_daddy.bool_ ()) {
-      return;
-   }
    // difficulty chaning once per round (time)
-   auto updateDifficulty = [] (Bot *bot, int32 offset) {
+   auto updateDifficulty = [] (Bot *bot, int32_t offset) {
       bot->m_difficulty = cr::clamp (static_cast <Difficulty> (bot->m_difficulty + offset), Difficulty::Noob, Difficulty::Expert);
    };
 
@@ -913,10 +925,10 @@ void BotManager::balanceBotDifficulties () {
       float score = bot->m_kpdRatio;
 
       // if kd ratio is going to go to low, we need to try to set higher difficulty
-      if (score < 0.8 || (score <= 1.2 && ratioBots < ratioPlayer)) {
+      if (score < 0.8f || (score <= 1.2f && ratioBots < ratioPlayer)) {
          updateDifficulty (bot.get (), +1);
       }
-      else if (score > 4.0f || (score >= 2.5 && ratioBots > ratioPlayer)) {
+      else if (score > 4.0f || (score >= 2.5f && ratioBots > ratioPlayer)) {
          updateDifficulty (bot.get (), -1);
       }
    }
@@ -931,9 +943,6 @@ void BotManager::destroy () {
 Bot::Bot (edict_t *bot, int difficulty, int personality, int team, int skin) {
    // this function does core operation of creating bot, it's called by addbot (),
    // when bot setup completed, (this is a bot class constructor)
-
-   // we're not initializing all the variables in bot class, so do an ugly thing... memset this
-   plat.bzero (this, sizeof (*this));
 
    int clientIndex = game.indexOfEntity (bot);
    pev = &bot->v;
@@ -963,7 +972,7 @@ Bot::Bot (edict_t *bot, int difficulty, int personality, int team, int skin) {
       }
    }
 
-   char reject[256] = {0, };
+   char reject[256] = { 0, };
    MDLL_ClientConnect (bot, bot->v.netname.chars (), strings.format ("127.0.0.%d", clientIndex + 100), reject);
 
    if (!strings.isEmpty (reject)) {
@@ -986,6 +995,13 @@ Bot::Bot (edict_t *bot, int difficulty, int personality, int team, int skin) {
    m_retryJoin = 0;
    m_moneyAmount = 0;
    m_logotypeIndex = conf.getRandomLogoIndex ();
+
+   if (cv_rotate_bots.bool_ ()) {
+      m_stayTime = game.time () + rg.get (cv_rotate_stay_min.float_ (), cv_rotate_stay_max.float_ ());
+   }
+   else {
+      m_stayTime = game.time () + kInfiniteDistance;
+   }
 
    // assign how talkative this bot will be
    m_sayTextBuffer.chatDelay = rg.get (3.8f, 10.0f);
@@ -1057,15 +1073,16 @@ Bot::Bot (edict_t *bot, int difficulty, int personality, int team, int skin) {
    // init path walker
    m_pathWalk.init (graph.getMaxRouteLength ());
 
+   // bot is not kicked by rorataion
+   m_kickedByRotation = false;
+
    // assign team and class
    m_wantedTeam = team;
    m_wantedSkin = skin;
 
-   newRound ();
-}
+   m_tasks.reserve (Task::Max);
 
-float Bot::getFrameInterval () {
-   return m_frameInterval;
+   newRound ();
 }
 
 float Bot::getConnectionTime () {
@@ -1107,6 +1124,24 @@ int BotManager::getAliveHumansCount () {
    return count;
 }
 
+int BotManager::getPlayerPriority (edict_t *ent) {
+   constexpr auto highPrio = 512;
+
+   // always check for only our own bots
+   auto bot = bots[ent];
+
+   // if player just return high prio
+   if (!bot) {
+      return game.indexOfEntity (ent) + highPrio;
+   }
+
+   // give bots some priority
+   if (bot->m_hasC4 || bot->m_isVIP || bot->hasHostage () || bot->m_healthValue < ent->v.health) {
+      return bot->entindex () + highPrio;
+   }
+   return bot->entindex ();
+}
+
 bool BotManager::isTeamStacked (int team) {
    if (team != Team::CT && team != Team::Terrorist) {
       return false;
@@ -1132,7 +1167,7 @@ void BotManager::erase (Bot *bot) {
          continue;
       }
 
-      if (cv_save_bots_names.bool_ ()) {
+      if (!bot->m_kickedByRotation && cv_save_bots_names.bool_ ()) {
          m_saveBotNames.emplaceLast (bot->pev->netname.chars ());
       }
       bot->markStale ();
@@ -1143,7 +1178,7 @@ void BotManager::erase (Bot *bot) {
       m_bots.erase (index, 1); // remove from bots array
       break;
    }
-   
+
 }
 
 void BotManager::handleDeath (edict_t *killer, edict_t *victim) {
@@ -1191,10 +1226,15 @@ void BotManager::handleDeath (edict_t *killer, edict_t *victim) {
    }
 
    // did a human kill a bot on his team?
-   else  {
+   else {
       if (victimBot != nullptr) {
          if (killerTeam == victimBot->m_team) {
             victimBot->m_voteKickIndex = game.indexOfEntity (killer);
+            for (const auto &notify : bots) {
+               if (notify->seesEntity (victim->v.origin)) {
+                  notify->pushChatterMessage (Chatter::TeamKill);
+               }
+            }
          }
          victimBot->m_notKilled = false;
       }
@@ -1213,7 +1253,7 @@ void Bot::newRound () {
 
    m_path = nullptr;
    m_currentTravelFlags = 0;
-   m_desiredVelocity= nullptr;
+   m_desiredVelocity = nullptr;
    m_currentNodeIndex = kInvalidNodeIndex;
    m_prevGoalIndex = kInvalidNodeIndex;
    m_chosenGoalIndex = kInvalidNodeIndex;
@@ -1302,7 +1342,7 @@ void Bot::newRound () {
    m_aimFlags = 0;
    m_liftState = 0;
 
-   m_aimLastError= nullptr;
+   m_aimLastError = nullptr;
    m_position = nullptr;
    m_liftTravelPos = nullptr;
 
@@ -1314,7 +1354,7 @@ void Bot::newRound () {
    m_hostages.clear ();
 
    for (auto &timer : m_chatterTimes) {
-      timer = kMaxChatterRepeatInteval;
+      timer = kMaxChatterRepeatInterval;
    }
 
    m_isReloading = false;
@@ -1398,7 +1438,7 @@ void Bot::newRound () {
       msg = BotMsg::None;
    }
    m_msgQueue.clear ();
-   m_goalHistory.clear ();
+   m_nodeHistory.clear ();
    m_ignoredBreakable.clear ();
 
    // clear last trace
@@ -1406,7 +1446,7 @@ void Bot::newRound () {
       m_lastTrace[i] = {};
       m_traceSkip[i] = 0;
    }
-   
+
    // and put buying into its message queue
    pushMsgQueue (BotMsg::Buy);
    startTask (Task::Normal, TaskPri::Normal, kInvalidNodeIndex, 0.0f, true);
@@ -1426,7 +1466,7 @@ void Bot::resetPathSearchType () {
    switch (m_personality) {
    default:
    case Personality::Normal:
-      m_pathType = morale ? FindPath::Optimal : FindPath::Safe;
+      m_pathType = morale ? FindPath::Optimal : FindPath::Fast;
       break;
 
    case Personality::Rusher:
@@ -1449,7 +1489,7 @@ void Bot::kill () {
 void Bot::kick () {
    // this function kick off one bot from the server.
    auto username = pev->netname.chars ();
- 
+
    if (!(pev->flags & FL_CLIENT) || strings.isEmpty (username)) {
       return;
    }
@@ -1460,10 +1500,10 @@ void Bot::kick () {
 }
 
 void Bot::markStale () {
-   showChaterIcon (false);
+   showChaterIcon (false, true);
 
    // clear the bot name
-   conf.clearUsedName (this); 
+   conf.clearUsedName (this);
 
    // clear fakeclient bit
    pev->flags &= ~FL_FAKECLIENT;
@@ -1508,13 +1548,15 @@ void Bot::updateTeamJoin () {
    if (m_startAction == BotMsg::TeamSelect) {
       m_startAction = BotMsg::None; // switch back to idle
 
-      char teamJoin = cv_join_team.str ()[0];
+      if (m_wantedTeam == -1) {
+         char teamJoin = cv_join_team.str ()[0];
 
-      if (teamJoin == 'C' || teamJoin == 'c') {
-         m_wantedTeam = 2;
-      }
-      else if (teamJoin == 'T' || teamJoin == 't') {
-         m_wantedTeam = 1;
+         if (teamJoin == 'C' || teamJoin == 'c') {
+            m_wantedTeam = 2;
+         }
+         else if (teamJoin == 'T' || teamJoin == 't') {
+            m_wantedTeam = 1;
+         }
       }
 
       if (m_wantedTeam != 1 && m_wantedTeam != 2) {
@@ -1571,7 +1613,7 @@ void Bot::updateTeamJoin () {
 
       // check for greeting other players, since we connected
       if (rg.chance (20)) {
-         pushChatMessage (Chat::Hello);
+         m_needToSendWelcomeChat = true;
       }
    }
 }
@@ -1594,10 +1636,10 @@ void BotManager::captureChatRadio (const char *cmd, const char *arg, edict_t *en
             continue;
          }
          auto target = bots[client.ent];
-         
+
          if (target != nullptr) {
             target->m_sayTextBuffer.entityIndex = game.indexOfPlayer (ent);
-   
+
             if (strings.isEmpty (engfuncs.pfnCmd_Args ())) {
                continue;
             }
@@ -1682,7 +1724,7 @@ void BotManager::updateIntrestingEntities () {
    // search the map for any type of grenade
    game.searchEntities (nullptr, kInfiniteDistance, [&] (edict_t *e) {
       auto classname = e->v.classname.chars ();
-      
+
       // search for grenades, weaponboxes, weapons, items and armoury entities
       if (strncmp ("weaponbox", classname, 9) == 0 || strncmp ("grenade", classname, 7) == 0 || util.isItem (e) || strncmp ("armoury", classname, 7) == 0) {
          m_intrestingEntities.push (e);

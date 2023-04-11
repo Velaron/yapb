@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -206,7 +206,7 @@ void MessageDispatcher::netMsgDamage () {
    if (m_args.length () < min || !m_bot) {
       return;
    }
-   
+
    // handle damage if any
    if (m_args[armor].long_ > 0 || m_args[health].long_) {
       m_bot->takeDamage (m_bot->pev->dmg_inflictor, m_args[health].long_, m_args[armor].long_, m_args[bits].long_);
@@ -283,7 +283,7 @@ void MessageDispatcher::netMsgScreenFade () {
    if (m_args.length () < min || !m_bot) {
       return;
    }
-   
+
    // screen completely faded ?
    if (m_args[r].long_ >= 255 && m_args[g].long_ >= 255 && m_args[b].long_ >= 255 && m_args[alpha].long_ > 170) {
       m_bot->takeBlind (m_args[alpha].long_);
@@ -335,7 +335,7 @@ void MessageDispatcher::netMsgScoreInfo () {
 
    // if we're have bot, set the kd ratio
    if (bot != nullptr) {
-      bot->m_kpdRatio = bot->pev->frags / cr::max <long> (m_args[deaths].long_, 1);
+      bot->m_kpdRatio = bot->pev->frags / cr::max (static_cast <float> (m_args[deaths].long_), 1.0f);
    }
 }
 
@@ -352,7 +352,7 @@ void MessageDispatcher::netMsgScoreAttrib () {
 
    // if we're have bot, set the vip state
    if (bot != nullptr) {
-      constexpr int32 kPlayerIsVIP = cr::bit (2);
+      constexpr int32_t kPlayerIsVIP = cr::bit (2);
 
       bot->m_isVIP = !!(m_args[flags].long_ & kPlayerIsVIP);
    }
@@ -492,7 +492,7 @@ MessageDispatcher::MessageDispatcher () {
    m_teamInfoCache["CT"] = Team::CT;
 }
 
-int32 MessageDispatcher::add (StringRef name, int32 id) {
+int32_t MessageDispatcher::add (StringRef name, int32_t id) {
    if (!m_wanted.has (name)) {
       return id;
    }
@@ -503,7 +503,7 @@ int32 MessageDispatcher::add (StringRef name, int32 id) {
    return id;
 }
 
-void MessageDispatcher::start (edict_t *ent, int32 type) {
+void MessageDispatcher::start (edict_t *ent, int32_t type) {
    reset ();
 
    if (game.is (GameFlags::Metamod)) {
@@ -551,16 +551,16 @@ void MessageDispatcher::ensureMessages () {
    }
 
    // re-register our message
-   m_wanted.foreach ([&] (const String &key, const int32 &) {
+   m_wanted.foreach ([&] (const String &key, const int32_t &) {
       add (key, GET_USER_MSG_ID (PLID, key.chars (), nullptr));
    });
 }
 
-int32 MessageDispatcher::id (NetMsg msg) {
+int32_t MessageDispatcher::id (NetMsg msg) {
    return m_maps[msg];
 }
 
-Bot *MessageDispatcher::pickBot (int32 index) {
+Bot *MessageDispatcher::pickBot (int32_t index) {
    const auto &client = util.getClient (m_args[index].long_ - 1);
 
    // get the bot in this msg

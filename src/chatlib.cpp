@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -54,19 +54,19 @@ void BotSupport::addChatErrors (String &line) {
    if (rg.chance (8) && strcmp (cv_language.str (), "en") == 0) {
       line.lowercase ();
    }
-   auto length = static_cast <int32> (line.length ());
+   auto length = static_cast <int32_t> (line.length ());
 
    if (length > 15) {
       auto percentile = length / 2;
 
       // "length / 2" percent of time drop a character
       if (rg.chance (percentile)) {
-         line.erase (rg.get (length / 8, length - length / 8), 1);
+         line.erase (static_cast <size_t> (rg.get (length / 8, length - length / 8), 1));
       }
 
       // "length" / 4 precent of time swap character
       if (rg.chance (percentile / 2)) {
-         size_t pos = rg.get (length / 8, 3 * length / 8); // choose random position in string
+         size_t pos = static_cast <size_t> (rg.get (length / 8, 3 * length / 8)); // choose random position in string
          cr::swap (line[pos], line[pos + 1]);
       }
    }
@@ -101,7 +101,7 @@ bool BotSupport::checkKeywords (StringRef line, String &reply) {
                      break;
                   }
                }
-               
+
                // reply not used, so use it
                if (!replyUsed) {
                   reply.assign (choosenReply); // update final buffer
@@ -181,7 +181,7 @@ void Bot::prepareChatMessage (StringRef message) {
    // get roundtime
    auto getRoundTime = [] () -> String {
       auto roundTimeSecs = static_cast <int> (bots.getRoundEndTime () - game.time ());
-      
+
       String roundTime;
       roundTime.assignf ("%02d:%02d", cr::clamp (roundTimeSecs / 60, 0, 59), cr::clamp (cr::abs (roundTimeSecs % 60), 0, 59));
 
@@ -300,7 +300,7 @@ bool Bot::isReplyingToChat () {
          if (rg.chance (m_sayTextBuffer.chatProbability + rg.get (40, 70)) && checkChatKeywords (replyText)) {
             prepareChatMessage (replyText);
             pushMsgQueue (BotMsg::Say);
-  
+
             m_sayTextBuffer.entityIndex = -1;
             m_sayTextBuffer.timeNextChat = game.time () + m_sayTextBuffer.chatDelay;
             m_sayTextBuffer.sayText.clear ();
@@ -338,7 +338,7 @@ void Bot::checkForChat () {
          if (!sayBufferExists) {
             prepareChatMessage (phrase);
             pushMsgQueue (BotMsg::Say);
- 
+
             m_lastChatTime = game.time ();
             bots.setLastChatTimestamp (game.time ());
 

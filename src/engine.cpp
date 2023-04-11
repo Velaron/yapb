@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -8,6 +8,7 @@
 #include <yapb.h>
 
 ConVar cv_csdm_mode ("yb_csdm_mode", "0", "Enables or disables CSDM / FFA mode for bots.\nAllowed values: '0', '1', '2', '3'.\nIf '0', CSDM / FFA mode is auto-detected.\nIf '1', CSDM mode is enabled, but FFA is disabled.\nIf '2', CSDM and FFA mode is enabled.\nIf '3', CSDM and FFA mode is disabled.", true, 0.0f, 3.0f);
+ConVar cv_breakable_health_limit ("yb_breakable_health_limit", "500.0", "Specifies the maximum health of breakable object, that bot will consider to destroy.", true, 1.0f, 3000.0);
 
 ConVar sv_skycolor_r ("sv_skycolor_r", nullptr, Var::GameRef);
 ConVar sv_skycolor_g ("sv_skycolor_g", nullptr, Var::GameRef);
@@ -62,7 +63,7 @@ void Game::levelInitialize (edict_t *entities, int max) {
    m_breakables.clear ();
 
    // initialize all config files
-   conf.loadConfigs (); 
+   conf.loadConfigs ();
 
    // update worldmodel
    illum.resetWorldModel ();
@@ -87,7 +88,7 @@ void Game::levelInitialize (edict_t *entities, int max) {
 
    // flush any print queue
    ctrl.resetFlushTimestamp ();
-   
+
    // go thru the all entities on map, and do whatever we're want
    for (int i = 0; i < max; ++i) {
       auto ent = entities + i;
@@ -422,7 +423,7 @@ void Game::setPlayerStartDrawModels () {
    });
 }
 
-bool Game::checkVisibility (edict_t *ent, uint8 *set) {
+bool Game::checkVisibility (edict_t *ent, uint8_t *set) {
    if (!set) {
       return true;
    }
@@ -451,13 +452,13 @@ bool Game::checkVisibility (edict_t *ent, uint8 *set) {
    return engfuncs.pfnCheckVisibility (ent, set) > 0;
 }
 
-uint8 *Game::getVisibilitySet (Bot *bot, bool pvs) {
+uint8_t *Game::getVisibilitySet (Bot *bot, bool pvs) {
    if (is (GameFlags::Xash3D)) {
       return nullptr;
    }
    auto eyes = bot->getEyesPos ();
 
-   if (bot->pev->flags & FL_DUCKING) {
+   if (bot->isDucking ()) {
       eyes += VEC_HULL_MIN - VEC_DUCK_HULL_MIN;
    }
    float org[3] { eyes.x, eyes.y, eyes.z };
@@ -480,14 +481,14 @@ void Game::sendClientMessage (bool console, edict_t *ent, StringRef message) {
          .writeByte (console ? HUD_PRINTCONSOLE : HUD_PRINTCENTER)
          .writeString (text.chars ());
    };
-   
+
    // do not excess limit
    constexpr size_t maxSendLength = 125;
 
    // split up the string into chunks if needed (maybe check if it's multibyte?)
    if (buffer.length () > maxSendLength) {
       auto chunks = buffer.split (maxSendLength);
-     
+
       // send in chunks
       for (size_t i = 0; i < chunks.length (); ++i) {
          sendTextMsg (chunks[i]);
@@ -530,7 +531,7 @@ void Game::prepareBotArgs (edict_t *ent, String str) {
    }
 
    // helper to parse single (not multi) command
-   auto parsePartArgs = [& ] (String &args) {
+   auto parsePartArgs = [&] (String &args) {
       args.trim ("\r\n\t\" "); // trim new lines
 
       // we're have empty commands?
@@ -608,7 +609,7 @@ bool Game::isSoftwareRenderer () {
    return false;
 }
 
-void Game::addNewCvar (const char *name, const char *value, const char *info, bool bounded, float min, float max, int32 varType, bool missingAction, const char *regval, ConVar *self) {
+void Game::addNewCvar (const char *name, const char *value, const char *info, bool bounded, float min, float max, int32_t varType, bool missingAction, const char *regval, ConVar *self) {
    // this function adds globally defined variable to registration stack
 
    ConVarReg reg {};
@@ -680,7 +681,7 @@ void Game::checkCvarsBounds () {
    if (is (GameFlags::Xash3D)) {
       static cvar_t *sv_forcesimulating = engfuncs.pfnCVarGetPointer ("sv_forcesimulating");
 
-      if (sv_forcesimulating && sv_forcesimulating->value != 1.0f) {
+      if (sv_forcesimulating && !cr::fequal (sv_forcesimulating->value, 1.0f)) {
          game.print ("Force-enable Xash3D sv_forcesimulating cvar.");
          engfuncs.pfnCVarSetFloat ("sv_forcesimulating", 1.0f);
       }
@@ -763,7 +764,7 @@ bool Game::loadCSBinary () {
       }
       return true;
    };
-   
+
    // search the libraries inside game dlls directory
    for (const auto &lib : libs) {
       auto path = strings.format ("%s/dlls/%s", modname, lib);
@@ -772,7 +773,7 @@ bool Game::loadCSBinary () {
       if (!File::exists (path)) {
          continue;
       }
-      
+
       // special case, czero is always detected first, as it's has custom directory
       if (strcmp (modname, "czero") == 0) {
          m_gameFlags |= (GameFlags::ConditionZero | GameFlags::HasBotVoice | GameFlags::HasFakePings);
@@ -797,7 +798,7 @@ bool Game::loadCSBinary () {
          auto entity = m_gameLib.resolve <EntityFunction> ("weapon_famas");
 
          // detect xash engine
-         if (engfuncs.pfnCVarGetPointer ("build") != nullptr) {
+         if (engfuncs.pfnCVarGetPointer ("host_ver") != nullptr) {
             m_gameFlags |= (GameFlags::Legacy | GameFlags::Xash3D);
 
             if (entity != nullptr) {
@@ -809,7 +810,7 @@ bool Game::loadCSBinary () {
             }
             return true;
          }
-         
+
          if (entity != nullptr) {
             m_gameFlags |= (GameFlags::Modern | GameFlags::HasBotVoice | GameFlags::HasFakePings);
          }
@@ -908,18 +909,18 @@ void Game::applyGameModes () {
    case 0:
       break;
 
-   // force CSDM mode
+      // force CSDM mode
    case 1:
       m_gameFlags |= GameFlags::CSDM;
       m_gameFlags &= ~GameFlags::FreeForAll;
       return;
 
-   // force CSDM FFA mode
+      // force CSDM FFA mode
    case 2:
       m_gameFlags |= GameFlags::CSDM | GameFlags::FreeForAll;
       return;
 
-   // force disable everything
+      // force disable everything
    case 3:
       m_gameFlags &= ~(GameFlags::CSDM | GameFlags::FreeForAll);
       return;
@@ -973,7 +974,7 @@ void Game::slowFrame () {
    // check if we're need to autokill bots
    bots.maintainAutoKill ();
 
-      // update client pings
+   // update client pings
    util.calculatePings ();
 
    // maintain leaders selection upon round start
@@ -1031,9 +1032,12 @@ bool Game::isShootableBreakable (edict_t *ent) {
    if (isNullEntity (ent)) {
       return false;
    }
+   auto limit = cv_breakable_health_limit.float_ ();
 
-   if (strcmp (ent->v.classname.chars (), "func_breakable") == 0 || (strcmp (ent->v.classname.chars (), "func_pushable") == 0 && (ent->v.spawnflags & SF_PUSH_BREAKABLE))) {
-      return !cr::fequal (ent->v.takedamage, DAMAGE_NO) && ent->v.impulse <= 0 && !(ent->v.flags & FL_WORLDBRUSH) && !(ent->v.spawnflags & SF_BREAK_TRIGGER_ONLY) && ent->v.health < 500.0f;
+   if ((strcmp (ent->v.classname.chars (), "func_breakable") == 0 && ent->v.health < limit) || (strcmp (ent->v.classname.chars (), "func_pushable") == 0 && (ent->v.spawnflags & SF_PUSH_BREAKABLE) && ent->v.health < limit) || (strcmp (ent->v.classname.chars (), "func_wall") == 0 && ent->v.health < limit)) {
+      if (ent->v.takedamage > 0.0f && ent->v.impulse <= 0 && !(ent->v.flags & FL_WORLDBRUSH) && !(ent->v.spawnflags & SF_BREAK_TRIGGER_ONLY)) {
+         return (ent->v.movetype == MOVETYPE_PUSH || ent->v.movetype == MOVETYPE_PUSHSTEP);
+      }
    }
    return false;
 }
@@ -1108,8 +1112,7 @@ void LightMeasure::animateLight () {
          m_lightstyleValue[j] = 256;
          continue;
       }
-      int value = m_lightstyle[j].map[index % m_lightstyle[j].length] - 'a';
-      m_lightstyleValue[j] = value * 22;
+      m_lightstyleValue[j] = static_cast <uint32_t> (m_lightstyle[j].map[index % m_lightstyle[j].length] - 'a') * 22u;
    }
 }
 
@@ -1122,7 +1125,7 @@ void LightMeasure::updateLight (int style, char *value) {
       return;
    }
 
-   if (strings.isEmpty (value)){
+   if (strings.isEmpty (value)) {
       m_lightstyle[style].length = 0u;
       m_lightstyle[style].map[0] = kNullChar;
 
@@ -1211,7 +1214,7 @@ template <typename S, typename M> bool LightMeasure::recursiveLightPoint (const 
 
       // compute the lightmap color at a particular point
       for (int maps = 0u; maps < MAXLIGHTMAPS && surf->styles[maps] != 255u; ++maps) {
-         uint32 scale = m_lightstyleValue[surf->styles[maps]];
+         uint32_t scale = m_lightstyleValue[surf->styles[maps]];
 
          m_point.red += lightmap->r * scale;
          m_point.green += lightmap->g * scale;

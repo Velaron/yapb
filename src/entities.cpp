@@ -1,13 +1,13 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
 
 #include <yapb.h>
 
-// on other tran win32/linux platforms i.e. arm we're using xash3d engine to run which exposes
+// on other than win32/linux platforms i.e. arm we're using xash3d engine to run which exposes
 // nice interface to handle with linkents. if ever rehlds or hlds engine will ever run on ARM or
 // other platforms, and you wan't to run bot on it without metamod, consider enabling LINKENT_STATIC_THUNKS
 // when compiling the bot, to get it supported.
@@ -180,6 +180,7 @@ LINK_ENTITY (test_effect)
 LINK_ENTITY (trigger)
 LINK_ENTITY (trigger_auto)
 LINK_ENTITY (trigger_autosave)
+LINK_ENTITY (trigger_bomb_reset)
 LINK_ENTITY (trigger_camera)
 LINK_ENTITY (trigger_cdaudio)
 LINK_ENTITY (trigger_changelevel)

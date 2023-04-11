@@ -1,19 +1,20 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
 
 #include <yapb.h>
 
-ConVar cv_shoots_thru_walls ("yb_shoots_thru_walls", "2", "Specifies whether bots able to fire at enemies behind the wall, if they hearing or suspecting them.", true, 0.0f, 2.0f);
+ConVar cv_shoots_thru_walls ("yb_shoots_thru_walls", "2", "Specifies whether bots able to fire at enemies behind the wall, if they hearing or suspecting them.", true, 0.0f, 3.0f);
 ConVar cv_ignore_enemies ("yb_ignore_enemies", "0", "Enables or disables searching world for enemies.");
 ConVar cv_check_enemy_rendering ("yb_check_enemy_rendering", "0", "Enables or disables checking enemy rendering flags. Useful for some mods.");
 ConVar cv_check_enemy_invincibility ("yb_check_enemy_invincibility", "0", "Enables or disables checking enemy invincibility. Useful for some mods.");
 ConVar cv_stab_close_enemies ("yb_stab_close_enemies", "1", "Enables or disables bot ability to stab the enemy with knife if bot is in good condition.");
 
 ConVar mp_friendlyfire ("mp_friendlyfire", nullptr, Var::GameRef);
+ConVar sv_gravity ("sv_gravity", nullptr, Var::GameRef);
 
 int Bot::numFriendsNear (const Vector &origin, float radius) {
    int count = 0;
@@ -133,17 +134,15 @@ bool Bot::checkBodyParts (edict_t *target) {
    }
 
    // check top of head
-   if (util.isPlayer (target)) {
-      spot.z += 25.0f;
-      game.testLine (eyes, spot, TraceIgnore::Everything, self, &result);
+   spot.z += 25.0f;
+   game.testLine (eyes, spot, TraceIgnore::Everything, self, &result);
 
-      if (result.flFraction >= 1.0f) {
-         m_enemyParts |= Visibility::Head;
-         m_enemyOrigin = result.vecEndPos;
-      }
+   if (result.flFraction >= 1.0f) {
+      m_enemyParts |= Visibility::Head;
+      m_enemyOrigin = result.vecEndPos;
    }
 
-   if (m_enemyParts != 0) {
+   if (m_enemyParts != Visibility::None) {
       return true;
    }
 
@@ -195,10 +194,6 @@ bool Bot::checkBodyParts (edict_t *target) {
 bool Bot::seesEnemy (edict_t *player, bool ignoreFOV) {
    if (game.isNullEntity (player)) {
       return false;
-   }
-
-   if (cv_whose_your_daddy.bool_ () && util.isPlayer (pev->dmg_inflictor) && game.getTeam (pev->dmg_inflictor) != m_team) {
-      ignoreFOV = true;
    }
 
    if ((ignoreFOV || isInViewCone (player->v.origin)) && isEnemyInFrustum (player) && checkBodyParts (player)) {
@@ -276,7 +271,7 @@ bool Bot::lookupEnemies () {
                float scaleFactor = (1.0f / calculateScaleFactor (intresting));
                float distance = intresting->v.origin.distanceSq (pev->origin) * scaleFactor;
 
-               if (distance * 0.7f < nearestDistance) {
+               if (distance * 0.65f < nearestDistance) {
                   nearestDistance = distance;
                   newEnemy = intresting;
                }
@@ -297,7 +292,7 @@ bool Bot::lookupEnemies () {
          }
 
          // extra skill player can see thru smoke... if beeing attacked
-         if ((player->v.button & (IN_ATTACK | IN_ATTACK2)) && m_viewDistance < m_maxViewDistance && cv_whose_your_daddy.bool_ ()) {
+         if ((player->v.button & (IN_ATTACK | IN_ATTACK2)) && m_viewDistance < m_maxViewDistance && m_difficulty == Difficulty::Expert) {
             nearestDistance = cr::square (m_maxViewDistance);
          }
 
@@ -309,7 +304,7 @@ bool Bot::lookupEnemies () {
             }
             float distance = player->v.origin.distanceSq (pev->origin);
 
-            if (distance * 0.7f < nearestDistance) {
+            if (distance * 0.65f < nearestDistance) {
                nearestDistance = distance;
                newEnemy = player;
 
@@ -320,13 +315,13 @@ bool Bot::lookupEnemies () {
             }
          }
       }
-      m_enemyUpdateTime = cr::clamp (game.time () + getFrameInterval () * 25.0f, 0.5f, 0.75f);
+      m_enemyUpdateTime = cr::clamp (game.time () + m_frameInterval * 25.0f, 0.5f, 0.75f);
 
       if (game.isNullEntity (newEnemy) && !game.isNullEntity (shieldEnemy)) {
          newEnemy = shieldEnemy;
       }
    }
-   
+
    if (newEnemy != nullptr && (util.isPlayer (newEnemy) || (cv_attack_monsters.bool_ () && util.isMonster (newEnemy)))) {
       bots.setCanPause (true);
 
@@ -349,18 +344,7 @@ bool Bot::lookupEnemies () {
             pushRadioMessage (Radio::EnemySpotted);
          }
          m_targetEntity = nullptr; // stop following when we see an enemy...
-
-         if (cv_whose_your_daddy.bool_ ()) {
-            m_enemySurpriseTime = m_actualReactionTime * 0.5f;
-         }
-         else {
-            m_enemySurpriseTime = m_actualReactionTime;
-         }
-
-         if (usesSniper ()) {
-            m_enemySurpriseTime *= 0.5f;
-         }
-         m_enemySurpriseTime += game.time ();
+         m_enemySurpriseTime = game.time () + m_actualReactionTime;
 
          // zero out reaction time
          m_actualReactionTime = 0.0f;
@@ -403,7 +387,7 @@ bool Bot::lookupEnemies () {
          // shoot at dying players if no new enemy to give some more human-like illusion
          if (m_seeEnemyTime + 0.1f > game.time ()) {
             if (!usesSniper ()) {
-               m_shootAtDeadTime = game.time () + cr::clamp (m_agressionLevel * 1.25f, 0.45f, 0.60f);
+               m_shootAtDeadTime = game.time () + cr::clamp (m_agressionLevel * 1.25f, 0.25f, 0.45f);
                m_actualReactionTime = 0.0f;
                m_states |= Sense::SuspectEnemy;
 
@@ -411,7 +395,7 @@ bool Bot::lookupEnemies () {
             }
             return false;
          }
-         
+
          else if (m_shootAtDeadTime > game.time ()) {
             m_actualReactionTime = 0.0f;
             m_states |= Sense::SuspectEnemy;
@@ -461,8 +445,8 @@ Vector Bot::getBodyOffsetError (float distance) {
    }
 
    if (m_aimErrorTime < game.time ()) {
-      const float error = distance / (cr::clamp (m_difficulty, 1, 3) * 1000.0f);
-      Vector &maxs = m_enemy->v.maxs, &mins = m_enemy->v.mins;
+      const float error = distance / (cr::clamp (static_cast <float> (m_difficulty), 1.0f, 4.0f) * 1000.0f);
+      auto &maxs = m_enemy->v.maxs, &mins = m_enemy->v.mins;
 
       m_aimLastError = Vector (rg.get (mins.x * error, maxs.x * error), rg.get (mins.y * error, maxs.y * error), rg.get (mins.z * error, maxs.z * error));
       m_aimErrorTime = game.time () + rg.get (1.0f, 1.2f);
@@ -474,10 +458,6 @@ const Vector &Bot::getEnemyBodyOffset () {
    // the purpose of this function, is to make bot aiming not so ideal. it's mutate m_enemyOrigin enemy vector
    // returned from visibility check function.
 
-   const auto headOffset = [] (edict_t *e) {
-      return e->v.absmin.z + e->v.size.z * 0.81f;
-   };
-
    // if no visibility data, use last one
    if (!m_enemyParts) {
       return m_enemyOrigin;
@@ -485,7 +465,7 @@ const Vector &Bot::getEnemyBodyOffset () {
    float distance = m_enemy->v.origin.distance (pev->origin);
 
    // do not aim at head, at long distance (only if not using sniper weapon)
-   if ((m_enemyParts & Visibility::Body) && !usesSniper () && distance > (m_difficulty > Difficulty::Normal ? 2000.0f : 1000.0f)) {
+   if ((m_enemyParts & Visibility::Body) && !usesSniper () && distance > (m_difficulty >= Difficulty::Normal ? 2000.0f : 1000.0f)) {
       m_enemyParts &= ~Visibility::Head;
    }
 
@@ -493,43 +473,61 @@ const Vector &Bot::getEnemyBodyOffset () {
    else if (distance < 800.0f && usesSniper ()) {
       m_enemyParts &= ~Visibility::Head;
    }
-   Vector aimPos = m_enemy->v.origin;
 
-   if (m_difficulty > Difficulty::Normal) {
-      aimPos += (m_enemy->v.velocity - pev->velocity) * (getFrameInterval () * 1.25f);
+   Vector spot = m_enemy->v.origin;
+   Vector compensation = 1.0f * m_frameInterval * m_enemy->v.velocity - 1.0f * m_frameInterval * pev->velocity;
+
+   if (!usesSniper () && distance > kDoubleSprayDistance) {
+      compensation *= m_frameInterval;
+      compensation.z = 0.0f;
+   }
+   else {
+      compensation = nullptr;
    }
 
    // if we only suspect an enemy behind a wall take the worst skill
    if (!m_enemyParts && (m_states & Sense::SuspectEnemy)) {
-      aimPos += getBodyOffsetError (distance);
+      spot += getBodyOffsetError (distance);
    }
    else if (util.isPlayer (m_enemy)) {
-      const float highOffset = m_difficulty > Difficulty::Normal ? 1.5f : 0.0f;
+      const float highOffset = m_kpdRatio < 1.0f ? 1.5f : 0.0f;
 
       // now take in account different parts of enemy body
       if (m_enemyParts & (Visibility::Head | Visibility::Body)) {
+         auto headshotPct = conf.getDifficultyTweaks (m_difficulty)->headshotPct;
+         auto onLoosingStreak = (m_fearLevel > m_agressionLevel || m_kpdRatio < 1.25f);
+
+         // reduce headshot percent in case we're play too good
+         if (!onLoosingStreak) {
+            headshotPct = cr::abs (headshotPct - headshotPct / 4);
+         }
 
          // now check is our skill match to aim at head, else aim at enemy body
-         if (rg.chance (conf.getDifficultyTweaks (m_difficulty)->headshotPct)) {
-            aimPos.z = headOffset (m_enemy) + getEnemyBodyOffsetCorrection (distance);
+         if (rg.chance (headshotPct)) {
+            if (onLoosingStreak) {
+               spot = m_enemyOrigin + Vector (0.0f, 0.0f, getEnemyBodyOffsetCorrection (distance));
+            }
+            else {
+               spot = m_enemyOrigin;
+            }
          }
          else {
-            aimPos.z += highOffset;
+            spot.z += highOffset;
          }
       }
       else if (m_enemyParts & Visibility::Body) {
-         aimPos.z += highOffset;
+         spot = m_enemyOrigin + Vector (0.0f, 0.0f, getEnemyBodyOffsetCorrection (distance));
       }
       else if (m_enemyParts & Visibility::Other) {
-         aimPos = m_enemyOrigin;
+         spot = m_enemyOrigin;
       }
       else if (m_enemyParts & Visibility::Head) {
-         aimPos.z = headOffset (m_enemy) + getEnemyBodyOffsetCorrection (distance);
+         spot = m_enemyOrigin + Vector (0.0f, 0.0f, getEnemyBodyOffsetCorrection (distance));
       }
    }
 
-   m_enemyOrigin = aimPos;
-   m_lastEnemyOrigin = aimPos;
+   m_enemyOrigin = spot + compensation;
+   m_lastEnemyOrigin = spot + compensation;
 
    // add some error to unskilled bots
    if (m_difficulty < Difficulty::Hard) {
@@ -544,19 +542,19 @@ float Bot::getEnemyBodyOffsetCorrection (float distance) {
    };
 
    static float offsetRanges[9][3] = {
-      { 0.0f,  0.0f,  0.0f }, // none
-      { 0.0f,  0.0f,  0.0f }, // melee
-      { 2.5f,  1.5f,  0.2f }, // pistol
-      { 6.5f,  0.0f, -9.9f }, // shotgun
-      { 0.5f, -6.5f, -9.0f }, // zoomrifle
-      { 0.5f, -6.5f, -9.5f }, // rifle
-      { 2.5f,  0.5f, -4.5f }, // smg
-      { 0.5f,  0.5f,  1.5f }, // sniper
-      { 1.5f, -2.0f, -9.0f }  // heavy
+      { 0.0f,  0.0f,   0.0f }, // none
+      { 0.0f,  0.0f,   4.0f }, // melee
+      { 3.5f,  2.0f,   1.5f }, // pistol
+      { 9.5f,  5.0f,  -8.0f }, // shotgun
+      { 4.5f  -3.5f,  -5.0f }, // zoomrifle
+      { 5.5f, -3.0f,  -5.5f }, // rifle
+      { 5.5f, -2.5f,  -5.5f }, // smg
+      { 3.5f,  1.5f,  -6.0f }, // sniper
+      { 2.5f, -4.0f,  -9.0f }  // heavy
    };
 
    // only highskilled bots do that 
-   if (m_difficulty < Difficulty::Normal) {
+   if (m_difficulty != Difficulty::Expert) {
       return 0.0f;
    }
 
@@ -610,16 +608,21 @@ bool Bot::isPenetrableObstacle (const Vector &dest) {
    // this function returns true if enemy can be shoot through some obstacle, false otherwise.
    // credits goes to Immortal_BLG
 
-   if (cv_shoots_thru_walls.int_ () == 2) {
+   auto method = cv_shoots_thru_walls.int_ ();
+
+   if (method == 2) {
       return isPenetrableObstacle2 (dest);
+   }
+   else if (method == 3) {
+      return isPenetrableObstacle3 (dest);
    }
 
    if (m_isUsingGrenade || m_difficulty < Difficulty::Normal) {
       return false;
    }
-   int penetratePower = conf.findWeaponById (m_currentWeapon).penetratePower;
+   auto power = conf.findWeaponById (m_currentWeapon).penetratePower;
 
-   if (penetratePower == 0) {
+   if (power == 0) {
       return false;
    }
    TraceResult tr {};
@@ -645,10 +648,10 @@ bool Bot::isPenetrableObstacle (const Vector &dest) {
    const float distance = cr::square (75.0f);
 
    if (obstacleDistance > 0.0f) {
-      while (penetratePower > 0) {
+      while (power > 0) {
          if (obstacleDistance > distance) {
             obstacleDistance -= distance;
-            penetratePower--;
+            power--;
 
             continue;
          }
@@ -690,11 +693,50 @@ bool Bot::isPenetrableObstacle2 (const Vector &dest) {
    }
 
    if (numHits < 3 && thikness < 98) {
-      if (dest.distanceSq (point) < 13143.0f) {
+      if (dest.distanceSq (point) < cr::square (112.0f)) {
          return true;
       }
    }
    return false;
+}
+
+bool Bot::isPenetrableObstacle3 (const Vector &dest) {
+   // this function returns if enemy can be shoot through some obstacle
+
+   if (m_isUsingGrenade || m_difficulty < Difficulty::Normal || !conf.findWeaponById (m_currentWeapon).penetratePower) {
+      return false;
+   }
+   auto power = conf.findWeaponById (m_currentWeapon).penetratePower;
+
+   if (power == 0) {
+      return false;
+   }
+   TraceResult tr {};
+
+   Vector source = getEyesPos ();
+   const auto &dir = (dest - source).normalize () * 8.0f;
+
+   for (;;) {
+      game.testLine (source, dest, TraceIgnore::Monsters, ent (), &tr);
+
+      if (tr.fStartSolid) {
+         if (tr.fAllSolid) {
+            return false;
+         }
+         source += dir;
+      }
+      else {
+         // check if line hit anything
+         if (cr::fequal (tr.flFraction, 1.0f)) {
+            return true;
+         }
+
+         if (--power == 0) {
+            return false;
+         }
+         source = tr.vecEndPos + dir;
+      }
+   }
 }
 
 bool Bot::needToPauseFiring (float distance) {
@@ -713,22 +755,19 @@ bool Bot::needToPauseFiring (float distance) {
          return true;
       }
    }
-   float offset = 5.0f;
+   float offset = 4.25f;
 
-   if (distance < kSprayDistance * 0.5f) {
+   if (distance < kSprayDistance) {
       return false;
    }
-   else if (distance < kSprayDistance) {
-      offset = 12.0f;
-   }
    else if (distance < kDoubleSprayDistance) {
-      offset = 10.0f;
+      offset = 8.0f;
    }
    const float xPunch = cr::deg2rad (pev->punchangle.x);
    const float yPunch = cr::deg2rad (pev->punchangle.y);
 
-   const float interval = getFrameInterval ();
-   const float tolerance = (100.0f - m_difficulty * 25.0f) / 99.0f;
+   const float interval = m_frameInterval;
+   const float tolerance = (100.0f - static_cast <float> (m_difficulty) * 25.0f) / 99.0f;
 
    // check if we need to compensate recoil
    if (cr::tanf (cr::sqrtf (cr::abs (xPunch * xPunch) + cr::abs (yPunch * yPunch))) * distance > offset + 30.0f + tolerance) {
@@ -754,8 +793,7 @@ void Bot::selectWeapons (float distance, int index, int id, int choosen) {
 
    // select this weapon if it isn't already selected
    if (m_currentWeapon != id) {
-      const auto &prop = conf.getWeaponProp (id);
-      selectWeaponByName (prop.classname.chars ());
+      selectWeaponById (id);
 
       // reset burst fire variables
       m_firePause = 0.0f;
@@ -791,7 +829,7 @@ void Bot::selectWeapons (float distance, int index, int id, int choosen) {
    }
 
    // is the bot holding a sniper rifle?
-   if (usesSniper () && m_zoomCheckTime < game.time ())  {
+   if (usesSniper () && m_zoomCheckTime < game.time ()) {
       // should the bot switch to the long-range zoom?
       if (distance > 1500.0f && pev->fov >= 40.0f) {
          pev->button |= IN_ATTACK2;
@@ -810,7 +848,7 @@ void Bot::selectWeapons (float distance, int index, int id, int choosen) {
    }
 
    // else is the bot holding a zoomable rifle?
-   else if (m_difficulty < Difficulty::Hard && usesZoomableRifle () && m_zoomCheckTime < game.time ())  {
+   else if (m_difficulty < Difficulty::Hard && usesZoomableRifle () && m_zoomCheckTime < game.time ()) {
       // should the bot switch to zoomed mode?
       if (distance > 800.0f && pev->fov >= 90.0f) {
          pev->button |= IN_ATTACK2;
@@ -848,10 +886,8 @@ void Bot::selectWeapons (float distance, int index, int id, int choosen) {
          }
       }
       else {
-         const auto &prop = conf.getWeaponProp (tab[index].id);
-
          // if automatic weapon press attack
-         if (tab[choosen].primaryFireHold && m_ammo[prop.ammo1] > tab[index].minPrimaryAmmo) {
+         if (tab[choosen].primaryFireHold && getAmmo (tab[index].id) > tab[index].minPrimaryAmmo) {
             pev->button |= IN_ATTACK;
          }
 
@@ -953,9 +989,7 @@ void Bot::fireWeapons () {
 
          // is the bot carrying this weapon?
          if (weapons & cr::bit (id)) {
-            const auto &prop = conf.getWeaponProp (id);
-
-            if (prop.ammo1 != -1 && prop.ammo1 < kMaxWeapons && m_ammo[prop.ammo1] >= tab[selectIndex].minPrimaryAmmo) {
+            if (getAmmo (id) >= tab[selectIndex].minPrimaryAmmo) {
 
                // available ammo found, reload weapon
                if (m_reloadState == Reload::None || m_reloadCheckTime > game.time ()) {
@@ -1017,9 +1051,9 @@ void Bot::focusEnemy () {
    // aim for the head and/or body
    m_lookAt = getEnemyBodyOffset ();
 
-   if (m_enemySurpriseTime > game.time ()) {
+   if (m_enemySurpriseTime > game.time () && !usesKnife ()) {
       return;
-   } 
+   }
    float distance = m_lookAt.distance2d (getEyesPos ()); // how far away is the enemy scum?
 
    if (distance < 128.0f && !usesSniper ()) {
@@ -1065,154 +1099,188 @@ void Bot::attackMovement () {
    if (game.isNullEntity (m_enemy)) {
       return;
    }
-   float distance = m_lookAt.distance2d (getEyesPos ()); // how far away is the enemy scum?
 
-   if (m_lastUsedNodesTime + getFrameInterval () + 0.5f < game.time ()) {
-      int approach;
+   if (m_lastUsedNodesTime - m_frameInterval > game.time ()) {
+      return;
+   }
 
-      if (usesKnife ()) {
-         approach = 100;
-      }
-      else if ((m_states & Sense::SuspectEnemy) && !(m_states & Sense::SeeingEnemy)) {
+   auto approach = 0;
+   auto distance = m_lookAt.distance2d (getEyesPos ()); // how far away is the enemy scum?
+
+   if (usesKnife ()) {
+      approach = 100;
+   }
+   else if ((m_states & Sense::SuspectEnemy) && !(m_states & Sense::SeeingEnemy)) {
+      approach = 49;
+   }
+   else if (m_isReloading || m_isVIP) {
+      approach = 29;
+   }
+   else {
+      approach = static_cast <int> (m_healthValue * m_agressionLevel);
+
+      if (usesSniper () && approach > 49) {
          approach = 49;
-      }
-      else if (m_isReloading || m_isVIP) {
-         approach = 29;
-      }
-      else {
-         approach = static_cast <int> (m_healthValue * m_agressionLevel);
-
-         if (usesSniper () && approach > 49) {
-            approach = 49;
-         }
-      }
-
-      // only take cover when bomb is not planted and enemy can see the bot or the bot is VIP
-      if ((m_states & Sense::SeeingEnemy) && approach < 30 && !bots.isBombPlanted () && (isInViewCone (m_enemy->v.origin) || m_isVIP)) {
-         m_moveSpeed = -pev->maxspeed;
-         startTask (Task::SeekCover, TaskPri::SeekCover, kInvalidNodeIndex, 0.0f, true);
-      }
-      else if (approach < 50) {
-         m_moveSpeed = 0.0f;
-      }
-      else {
-         m_moveSpeed = pev->maxspeed;
-      }
-
-      if (distance < 96.0f && !usesKnife ()) {
-         m_moveSpeed = -pev->maxspeed;
-      }
-
-      if (usesSniper () || !(m_enemyParts & (Visibility::Body | Visibility::Head))) {
-         m_fightStyle = Fight::Stay;
-         m_lastFightStyleCheck = game.time ();
-      }
-      else if (usesRifle () || usesSubmachine ()) {
-         if (m_lastFightStyleCheck + 3.0f < game.time ()) {
-            int rand = rg.get (1, 100);
-
-            if (distance < 450.0f) {
-               m_fightStyle = Fight::Strafe;
-            }
-            else if (distance < 1024.0f) {
-               if (rand < (usesSubmachine () ? 50 : 30)) {
-                  m_fightStyle = Fight::Strafe;
-               }
-               else {
-                  m_fightStyle = Fight::Stay;
-               }
-            }
-            else {
-               if (rand < (usesSubmachine () ? 80 : 93)) {
-                  m_fightStyle = Fight::Stay;
-               }
-               else {
-                  m_fightStyle = Fight::Strafe;
-               }
-            }
-            m_lastFightStyleCheck = game.time ();
-         }
-      }
-      else {
-         m_fightStyle = Fight::Strafe;
-      }
-
-      if (m_fightStyle == Fight::Strafe || ((pev->button & IN_RELOAD) || m_isReloading) || (usesPistol () && distance < 400.0f) || usesKnife ()) {
-         if (m_strafeSetTime < game.time ()) {
-
-            // to start strafing, we have to first figure out if the target is on the left side or right side
-            const auto &dirToPoint = (pev->origin - m_enemy->v.origin).normalize2d ();
-            const auto &rightSide = m_enemy->v.v_angle.right ().normalize2d ();
-
-            if ((dirToPoint | rightSide) < 0) {
-               m_combatStrafeDir = Dodge::Left;
-            }
-            else {
-               m_combatStrafeDir = Dodge::Right;
-            }
-
-            if (rg.chance (30)) {
-               m_combatStrafeDir = (m_combatStrafeDir == Dodge::Left ? Dodge::Right : Dodge::Left);
-            }
-            m_strafeSetTime = game.time () + rg.get (0.5f, 3.0f);
-         }
-
-         if (m_combatStrafeDir == Dodge::Right) {
-            if (!checkWallOnLeft ()) {
-               m_strafeSpeed = -pev->maxspeed;
-            }
-            else {
-               m_combatStrafeDir = Dodge::Left;
-               m_strafeSetTime = game.time () + rg.get (0.8f, 1.1f);
-            }
-         }
-         else {
-            if (!checkWallOnRight ()) {
-               m_strafeSpeed = pev->maxspeed;
-            }
-            else {
-               m_combatStrafeDir = Dodge::Right;
-               m_strafeSetTime = game.time () + rg.get (0.8f, 1.1f);
-            }
-         }
-
-         if (m_difficulty >= Difficulty::Hard && (m_jumpTime + 5.0f < game.time () && isOnFloor () && rg.get (0, 1000) < (m_isReloading ? 8 : 2) && pev->velocity.length2d () > 120.0f) && !usesSniper ()) {
-            pev->button |= IN_JUMP;
-         }
-
-         if (m_moveSpeed > 0.0f && distance > 100.0f && !usesKnife ()) {
-            m_moveSpeed = 0.0f;
-         }
-
-         if (usesKnife ()) {
-            m_strafeSpeed = 0.0f;
-         }
-      }
-      else if (m_fightStyle == Fight::Stay) {
-         if ((m_enemyParts & (Visibility::Head | Visibility::Body)) && !(m_enemyParts & Visibility::Other) && getCurrentTaskId () != Task::SeekCover && getCurrentTaskId () != Task::Hunt) {
-            int enemyNearestIndex = graph.getNearest (m_enemy->v.origin);
-
-            if (graph.isDuckVisible (m_currentNodeIndex, enemyNearestIndex) && graph.isDuckVisible (enemyNearestIndex, m_currentNodeIndex)) {
-               m_duckTime = game.time () + 0.64f;
-            }
-         }
-         m_moveSpeed = 0.0f;
-         m_strafeSpeed = 0.0f;
-         m_navTimeset = game.time ();
       }
    }
 
-   if (m_fightStyle == Fight::Stay || (m_duckTime > game.time () || m_sniperStopTime > game.time ())) {
-      if (m_moveSpeed > 0.0f && !usesKnife ()) {
-         m_moveSpeed = 0.0f;
+   // only take cover when bomb is not planted and enemy can see the bot or the bot is VIP
+   if ((m_states & Sense::SeeingEnemy) && approach < 30 && !bots.isBombPlanted () && (isInViewCone (m_enemy->v.origin) || m_isVIP)) {
+      m_moveSpeed = -pev->maxspeed;
+      startTask (Task::SeekCover, TaskPri::SeekCover, kInvalidNodeIndex, 0.0f, true);
+   }
+   else if (approach < 50) {
+      m_moveSpeed = 0.0f;
+   }
+   else {
+      m_moveSpeed = pev->maxspeed;
+   }
+
+   if (distance < 96.0f && !usesKnife ()) {
+      m_moveSpeed = -pev->maxspeed;
+   }
+
+   if (m_lastFightStyleCheck + 3.0f < game.time ()) {
+      if (usesSniper ()) {
+         m_fightStyle = Fight::Stay;
       }
+      else if (usesRifle () || usesSubmachine () || usesHeavy ()) {
+         int rand = rg.get (1, 100);
+
+         if (distance < 500.0f) {
+            m_fightStyle = Fight::Strafe;
+         }
+         else if (distance < 1024.0f) {
+            if (rand < (usesSubmachine () ? 50 : 30)) {
+               m_fightStyle = Fight::Strafe;
+            }
+            else {
+               m_fightStyle = Fight::Stay;
+            }
+         }
+         else {
+            if (rand < (usesSubmachine () ? 80 : 90)) {
+               m_fightStyle = Fight::Stay;
+            }
+            else {
+               m_fightStyle = Fight::Strafe;
+            }
+         }
+      }
+      else if (rg.get (0, 100) < (isInNarrowPlace () ? 25 : 75)) {
+         m_fightStyle = Fight::Strafe;
+      }
+      else {
+         m_fightStyle = Fight::Stay;
+      }
+
+      // do not try to strafe while ducking
+      if (isDucking () || isInNarrowPlace ()) {
+         m_fightStyle = Fight::Stay;
+      }
+      m_lastFightStyleCheck = game.time ();
+   }
+
+   if (m_fightStyle == Fight::Strafe) {
+      auto swapStrafeCombatDir = [&] () {
+         m_combatStrafeDir = (m_combatStrafeDir == Dodge::Left ? Dodge::Right : Dodge::Left);
+      };
+
+      auto strafeUpdateTime = [] () {
+         return game.time () + rg.get (0.5f, 1.0f);
+      };
+
+      // to start strafing, we have to first figure out if the target is on the left side or right side
+      if (m_strafeSetTime < game.time ()) {
+         const auto &dirToPoint = (pev->origin - m_enemy->v.origin).normalize2d ();
+         const auto &rightSide = m_enemy->v.v_angle.right ().normalize2d ();
+
+         if ((dirToPoint | rightSide) < 0.0f) {
+            m_combatStrafeDir = Dodge::Left;
+         }
+         else {
+            m_combatStrafeDir = Dodge::Right;
+         }
+
+         if (rg.chance (30)) {
+            swapStrafeCombatDir ();
+         }
+         m_strafeSetTime = strafeUpdateTime ();
+      }
+
+      if (m_combatStrafeDir == Dodge::Right) {
+         if (!checkWallOnLeft ()) {
+            m_strafeSpeed = -pev->maxspeed;
+         }
+         else if (!checkWallOnRight ()) {
+            swapStrafeCombatDir ();
+            m_strafeSetTime = strafeUpdateTime ();
+
+            m_strafeSpeed = pev->maxspeed;
+         }
+         else {
+            m_strafeSpeed = 0.0f;
+            m_strafeSetTime = strafeUpdateTime ();
+         }
+      }
+      else {
+         if (!checkWallOnRight ()) {
+            m_strafeSpeed = pev->maxspeed;
+         }
+         else if (!checkWallOnLeft ()) {
+            swapStrafeCombatDir ();
+            m_strafeSetTime = strafeUpdateTime ();
+
+            m_strafeSpeed = -pev->maxspeed;
+         }
+         else {
+            m_strafeSpeed = 0.0f;
+            m_strafeSetTime = strafeUpdateTime ();
+         }
+      }
+
+      if (m_difficulty >= Difficulty::Normal && (m_jumpTime + 5.0f < game.time () && isOnFloor () && rg.get (0, 1000) < (m_isReloading ? 8 : 2) && pev->velocity.length2d () > 150.0f) && !usesSniper ()) {
+         pev->button |= IN_JUMP;
+      }
+   }
+   else {
+      if ((m_enemyParts & (Visibility::Head | Visibility::Body)) && getCurrentTaskId () != Task::SeekCover && getCurrentTaskId () != Task::Hunt) {
+         int enemyNearestIndex = graph.getNearest (m_enemy->v.origin);
+
+         if (graph.isVisible (m_currentNodeIndex, enemyNearestIndex) && graph.isDuckVisible (m_currentNodeIndex, enemyNearestIndex) && graph.isDuckVisible (enemyNearestIndex, m_currentNodeIndex)) {
+            m_duckTime = game.time () + m_frameInterval * 2.0f;
+         }
+      }
+      m_moveSpeed = 0.0f;
+      m_strafeSpeed = 0.0f;
+   }
+
+   m_navTimeset = game.time ();
+   m_moveToGoal = false;
+   m_checkTerrain = false;
+
+   if (m_difficulty >= Difficulty::Normal && isOnFloor () && m_duckTime < game.time ()) {
+      if (distance < 768.0f) {
+         if (rg.get (0, 1000) < rg.get (7, 12) && pev->velocity.length2d () > 150.0f && isInViewCone (m_enemy->v.origin)) {
+            pev->button |= IN_JUMP;
+         }
+      }
+   }
+
+   if (m_isReloading) {
+      m_moveSpeed = -pev->maxspeed;
+      m_duckTime = game.time () - 1.0f;
    }
 
    if (!isInWater () && !isOnLadder () && (m_moveSpeed > 0.0f || m_strafeSpeed >= 0.0f)) {
       Vector right, forward;
       pev->v_angle.angleVectors (&forward, &right, nullptr);
 
-      if (isDeadlyMove (pev->origin + (forward * m_moveSpeed * 0.2f) + (right * m_strafeSpeed * 0.2f) + (pev->velocity * getFrameInterval ()))) {
+      const auto &front = right * m_moveSpeed * 0.2f;
+      const auto &side = right * m_strafeSpeed * 0.2f;
+      const auto &spot = pev->origin + front + side + pev->velocity * m_frameInterval;
+
+      if (isDeadlyMove (spot)) {
          m_strafeSpeed = -m_strafeSpeed;
          m_moveSpeed = -m_moveSpeed;
 
@@ -1303,7 +1371,7 @@ bool Bot::usesCampGun () {
    return usesSubmachine () || usesRifle () || usesSniper () || usesHeavy ();
 }
 
-bool Bot::usesKnife (){
+bool Bot::usesKnife () {
    return m_weaponType == WeaponType::Melee;
 }
 
@@ -1311,7 +1379,7 @@ int Bot::bestPrimaryCarried () {
    // this function returns the best weapon of this bot (based on personality prefs)
 
    const int *pref = conf.getWeaponPrefs (m_personality);
-   
+
    int weaponIndex = 0;
    int weapons = pev->weapons;
 
@@ -1404,9 +1472,9 @@ void Bot::selectBestWeapon () {
    // this function chooses best weapon, from weapons that bot currently own, and change
    // current weapon to best one.
 
+   // if knife mode activated, force bot to use knife
    if (cv_jasonmode.bool_ ()) {
-      // if knife mode activated, force bot to use knife
-      selectWeaponByName ("weapon_knife");
+      selectWeaponById (Weapon::Knife);
       return;
    }
 
@@ -1433,10 +1501,9 @@ void Bot::selectBestWeapon () {
       if (tab[selectIndex].id == m_currentWeapon && (getAmmoInClip () < 0 || getAmmoInClip () >= tab[selectIndex].minPrimaryAmmo)) {
          ammoLeft = true;
       }
-      const auto &prop = conf.getWeaponProp (id);
 
       // is no ammo required for this weapon OR enough ammo available to fire
-      if (prop.ammo1 < 0 || (prop.ammo1 < kMaxWeapons && m_ammo[prop.ammo1] >= tab[selectIndex].minPrimaryAmmo)) {
+      if (getAmmo (id) >= tab[selectIndex].minPrimaryAmmo) {
          ammoLeft = true;
       }
 
@@ -1449,11 +1516,11 @@ void Bot::selectBestWeapon () {
    chosenWeaponIndex %= kNumWeapons + 1;
    selectIndex = chosenWeaponIndex;
 
-   int id = tab[selectIndex].id;
+   const int id = tab[selectIndex].id;
 
    // select this weapon if it isn't already selected
    if (m_currentWeapon != id) {
-      selectWeaponByName (tab[selectIndex].name);
+      selectWeaponById (tab[selectIndex].id);
    }
    m_isReloading = false;
    m_reloadState = Reload::None;
@@ -1485,16 +1552,6 @@ int Bot::bestWeaponCarried () {
       tab++;
    }
    return num;
-}
-
-void Bot::selectWeaponByName (const char *name) {
-   issueCommand (name);
-}
-
-void Bot::selectWeaponById (int num) {
-   auto tab = conf.getRawWeapons ();
-
-   issueCommand (tab[num].name);
 }
 
 void Bot::decideFollowUser () {
@@ -1601,7 +1658,7 @@ void Bot::checkReload () {
    m_reloadCheckTime = game.time () + 3.0f;
 
    if (m_reloadState != Reload::None) {
-      int weaponIndex = 0;
+      int wid = 0;
       int weapons = pev->weapons;
 
       if (m_reloadState == Reload::Primary) {
@@ -1622,15 +1679,15 @@ void Bot::checkReload () {
 
       for (int i = 1; i < kMaxWeapons; ++i) {
          if (weapons & cr::bit (i)) {
-            weaponIndex = i;
+            wid = i;
             break;
          }
       }
-      const auto &prop = conf.getWeaponProp (weaponIndex);
+      const auto &prop = conf.getWeaponProp (wid);
 
-      if (m_ammoInClip[weaponIndex] < conf.findWeaponById (weaponIndex).maxClip * 0.8f && prop.ammo1 != -1 && prop.ammo1 < kMaxWeapons && m_ammo[prop.ammo1] > 0) {
-         if (m_currentWeapon != weaponIndex) {
-            selectWeaponByName (prop.classname.chars ());
+      if (isLowOnAmmo (prop.id, 0.75f) && getAmmo (prop.id) > 0) {
+         if (m_currentWeapon != prop.id) {
+            selectWeaponById (prop.id);
          }
          pev->button &= ~IN_ATTACK;
 
@@ -1663,4 +1720,312 @@ float Bot::calculateScaleFactor (edict_t *ent) {
    float botArea = 2 * (botSize.x * botSize.y + botSize.y * botSize.z + botSize.x * botSize.z);
 
    return entArea / botArea;
+}
+
+Vector Bot::calcToss (const Vector &start, const Vector &stop) {
+   // this function returns the velocity at which an object should looped from start to land near end.
+   // returns null vector if toss is not feasible.
+
+   TraceResult tr {};
+   float gravity = sv_gravity.float_ () * 0.55f;
+
+   Vector end = stop - pev->velocity;
+   end.z -= 15.0f;
+
+   if (cr::abs (end.z - start.z) > 500.0f) {
+      return nullptr;
+   }
+   Vector midPoint = start + (end - start) * 0.5f;
+   game.testHull (midPoint, midPoint + Vector (0.0f, 0.0f, 500.0f), TraceIgnore::Monsters, head_hull, ent (), &tr);
+
+   if (tr.flFraction < 1.0f && tr.pHit) {
+      midPoint = tr.vecEndPos;
+      midPoint.z = tr.pHit->v.absmin.z - 1.0f;
+   }
+
+   if (midPoint.z < start.z || midPoint.z < end.z) {
+      return nullptr;
+   }
+   float timeOne = cr::sqrtf ((midPoint.z - start.z) / (0.5f * gravity));
+   float timeTwo = cr::sqrtf ((midPoint.z - end.z) / (0.5f * gravity));
+
+   if (timeOne < 0.1f) {
+      return nullptr;
+   }
+   Vector velocity = (end - start) / (timeOne + timeTwo);
+   velocity.z = gravity * timeOne;
+
+   Vector apex = start + velocity * timeOne;
+   apex.z = midPoint.z;
+
+   game.testHull (start, apex, TraceIgnore::None, head_hull, ent (), &tr);
+
+   if (tr.flFraction < 1.0f || tr.fAllSolid) {
+      return nullptr;
+   }
+   game.testHull (end, apex, TraceIgnore::Monsters, head_hull, ent (), &tr);
+
+   if (!cr::fequal (tr.flFraction, 1.0f)) {
+      float dot = -(tr.vecPlaneNormal | (apex - end).normalize ());
+
+      if (dot > 0.75f || tr.flFraction < 0.8f) {
+         return nullptr;
+      }
+   }
+   return velocity * 0.777f;
+}
+
+Vector Bot::calcThrow (const Vector &start, const Vector &stop) {
+   // this function returns the velocity vector at which an object should be thrown from start to hit end.
+   // returns null vector if throw is not feasible.
+
+   Vector velocity = stop - start;
+   TraceResult tr {};
+
+   float gravity = sv_gravity.float_ () * 0.55f;
+   float time = velocity.length () / 195.0f;
+
+   if (time < 0.01f) {
+      return nullptr;
+   }
+   else if (time > 2.0f) {
+      time = 1.2f;
+   }
+   const float half = time * 0.5f;
+
+   velocity = velocity * (1.0f / time);
+   velocity.z += gravity * half * half;
+
+   Vector apex = start + (stop - start) * 0.5f;
+   apex.z += 0.5f * gravity * half;
+
+   game.testHull (start, apex, TraceIgnore::None, head_hull, ent (), &tr);
+
+   if (!cr::fequal (tr.flFraction, 1.0f)) {
+      return nullptr;
+   }
+   game.testHull (stop, apex, TraceIgnore::Monsters, head_hull, ent (), &tr);
+
+   if (!cr::fequal (tr.flFraction, 1.0) || tr.fAllSolid) {
+      float dot = -(tr.vecPlaneNormal | (apex - stop).normalize ());
+
+      if (dot > 0.75f || tr.flFraction < 0.8f) {
+         return nullptr;
+      }
+   }
+   return velocity * 0.7793f;
+}
+
+edict_t *Bot::setCorrectGrenadeVelocity (const char *model) {
+   edict_t *result = nullptr;
+
+   game.searchEntities ("classname", "grenade", [&] (edict_t *ent) {
+      if (ent->v.owner == this->ent () && util.isModel (ent, model)) {
+         result = ent;
+
+         // set the correct velocity for the grenade
+         if (m_grenade.lengthSq () > 100.0f) {
+            ent->v.velocity = m_grenade + (m_grenade * m_frameInterval * 4.0f);
+         }
+         m_grenadeCheckTime = game.time () + 3.0f;
+
+         selectBestWeapon ();
+         completeTask ();
+
+         return EntitySearchResult::Break;
+      }
+      return EntitySearchResult::Continue;
+   });
+   return result;
+}
+
+void Bot::checkGrenadesThrow () {
+
+   // do not check cancel if we have grenade in out hands
+   bool preventibleTasks = getCurrentTaskId () == Task::PlantBomb || getCurrentTaskId () == Task::DefuseBomb;
+
+   auto clearThrowStates = [] (uint32_t &states) {
+      states &= ~(Sense::ThrowExplosive | Sense::ThrowFlashbang | Sense::ThrowSmoke);
+   };
+
+   // check if throwing a grenade is a good thing to do...
+   if (preventibleTasks || isInNarrowPlace () || cv_ignore_enemies.bool_ () || m_isUsingGrenade || m_grenadeRequested || m_isReloading || cv_jasonmode.bool_ () || (m_grenadeRequested || m_grenadeCheckTime >= game.time ())) {
+      clearThrowStates (m_states);
+      return;
+   }
+
+   // check again in some seconds
+   m_grenadeCheckTime = game.time () + kGrenadeCheckTime;
+
+   if (!util.isAlive (m_lastEnemy) || !(m_states & (Sense::SuspectEnemy | Sense::HearingEnemy))) {
+      clearThrowStates (m_states);
+      return;
+   }
+
+   // check if we have grenades to throw
+   int grenadeToThrow = bestGrenadeCarried ();
+
+   // if we don't have grenades no need to check it this round again
+   if (grenadeToThrow == -1) {
+      m_grenadeCheckTime = game.time () + 15.0f; // changed since, conzero can drop grens from dead players
+
+      clearThrowStates (m_states);
+      return;
+   }
+   else {
+      int cancelProb = 20;
+
+      if (grenadeToThrow == Weapon::Flashbang) {
+         cancelProb = 25;
+      }
+      else if (grenadeToThrow == Weapon::Smoke) {
+         cancelProb = 35;
+      }
+      if (rg.chance (cancelProb)) {
+         clearThrowStates (m_states);
+         return;
+      }
+   }
+   float distance = m_lastEnemyOrigin.distance2d (pev->origin);
+
+   // don't throw grenades at anything that isn't on the ground!
+   if (!(m_lastEnemy->v.flags & FL_ONGROUND) && !m_lastEnemy->v.waterlevel && m_lastEnemyOrigin.z > pev->absmax.z) {
+      distance = kInfiniteDistance;
+   }
+
+   // too high to throw?
+   if (m_lastEnemy->v.origin.z > pev->origin.z + 500.0f) {
+      distance = kInfiniteDistance;
+   }
+
+   // enemy within a good throw distance?
+   if (!m_lastEnemyOrigin.empty () && distance > (grenadeToThrow == Weapon::Smoke ? 200.0f : 400.0f) && distance < 1200.0f) {
+      bool allowThrowing = true;
+
+      // care about different grenades
+      switch (grenadeToThrow) {
+      case Weapon::Explosive:
+         if (numFriendsNear (m_lastEnemy->v.origin, 256.0f) > 0) {
+            allowThrowing = false;
+         }
+         else {
+            float radius = m_lastEnemy->v.velocity.length2d ();
+            const Vector &pos = (m_lastEnemy->v.velocity * 0.5f).get2d () + m_lastEnemy->v.origin;
+
+            if (radius < 164.0f) {
+               radius = 164.0f;
+            }
+            auto predicted = graph.searchRadius (radius, pos, 12);
+
+            if (predicted.empty ()) {
+               m_states &= ~Sense::ThrowExplosive;
+               break;
+            }
+
+            for (const auto predict : predicted) {
+               allowThrowing = true;
+
+               if (!graph.exists (predict)) {
+                  allowThrowing = false;
+                  continue;
+               }
+               m_throw = graph[predict].origin;
+
+               auto throwPos = calcThrow (getEyesPos (), m_throw);
+
+               if (throwPos.lengthSq () < 100.0f) {
+                  throwPos = calcToss (getEyesPos (), m_throw);
+               }
+
+               if (throwPos.empty ()) {
+                  allowThrowing = false;
+               }
+               else {
+                  m_throw.z += 110.0f;
+                  break;
+               }
+            }
+         }
+
+         if (allowThrowing) {
+            m_states |= Sense::ThrowExplosive;
+         }
+         else {
+            m_states &= ~Sense::ThrowExplosive;
+         }
+         break;
+
+      case Weapon::Flashbang:
+      {
+         int nearest = graph.getNearest ((m_lastEnemy->v.velocity * 0.5f).get2d () + m_lastEnemy->v.origin);
+
+         if (nearest != kInvalidNodeIndex) {
+            m_throw = graph[nearest].origin;
+
+            if (numFriendsNear (m_throw, 256.0f) > 0) {
+               allowThrowing = false;
+            }
+         }
+         else {
+            allowThrowing = false;
+         }
+
+         if (allowThrowing) {
+            auto throwPos = calcThrow (getEyesPos (), m_throw);
+
+            if (throwPos.lengthSq () < 100.0f) {
+               throwPos = calcToss (getEyesPos (), m_throw);
+            }
+
+            if (throwPos.empty ()) {
+               allowThrowing = false;
+            }
+            else {
+               m_throw.z += 110.0f;
+            }
+         }
+
+         if (allowThrowing) {
+            m_states |= Sense::ThrowFlashbang;
+         }
+         else {
+            m_states &= ~Sense::ThrowFlashbang;
+         }
+         break;
+      }
+
+      case Weapon::Smoke:
+         if (allowThrowing && !game.isNullEntity (m_lastEnemy)) {
+            if (util.getShootingCone (m_lastEnemy, pev->origin) >= 0.9f) {
+               allowThrowing = false;
+            }
+         }
+
+         if (allowThrowing) {
+            m_states |= Sense::ThrowSmoke;
+         }
+         else {
+            m_states &= ~Sense::ThrowSmoke;
+         }
+         break;
+
+      default:
+         clearThrowStates (m_states);
+         return;
+      }
+      const float kMaxThrowTime = game.time () + kGrenadeCheckTime * 6.0f;
+
+      if (m_states & Sense::ThrowExplosive) {
+         startTask (Task::ThrowExplosive, TaskPri::Throw, kInvalidNodeIndex, kMaxThrowTime, false);
+      }
+      else if (m_states & Sense::ThrowFlashbang) {
+         startTask (Task::ThrowFlashbang, TaskPri::Throw, kInvalidNodeIndex, kMaxThrowTime, false);
+      }
+      else if (m_states & Sense::ThrowSmoke) {
+         startTask (Task::ThrowSmoke, TaskPri::Throw, kInvalidNodeIndex, kMaxThrowTime, false);
+      }
+   }
+   else {
+      clearThrowStates (m_states);
+   }
 }

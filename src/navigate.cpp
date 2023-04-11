@@ -1,48 +1,28 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
 
 #include <yapb.h>
 
-ConVar cv_whose_your_daddy ("yb_whose_your_daddy", "0", "Enables or disables extra hard difficulty for bots.");
 ConVar cv_path_heuristic_mode ("yb_path_heuristic_mode", "4", "Selects the heuristic function mode. For debug purposes only.", true, 0.0f, 4.0f);
-
 ConVar cv_path_danger_factor_min ("yb_path_danger_factor_min", "200", "Lower bound of danger factor that used to add additional danger to path based on practice.", true, 100.0f, 2400.0f);
 ConVar cv_path_danger_factor_max ("yb_path_danger_factor_max", "400", "Upper bound of danger factor that used to add additional danger to path based on practice.", true, 200.0f, 4800.0f);
 
 int Bot::findBestGoal () {
-
-   auto pushToHistroy = [&] (int32 goal) -> int32 {
-      m_goalHistory.push (goal);
+   auto pushToHistroy = [&] (int32_t goal) -> int32_t {
+      m_nodeHistory.push (goal);
       return goal;
    };
 
    // chooses a destination (goal) node for a bot
-   if (!bots.isBombPlanted () && m_team == Team::Terrorist && game.mapIs (MapFlags::Demolition)) {
-      int result = kInvalidNodeIndex;
+   if (m_team == Team::Terrorist && game.mapIs (MapFlags::Demolition)) {
+      auto result = findBestGoalWhenBombAction ();
 
-      game.searchEntities ("classname", "weaponbox", [&] (edict_t *ent) {
-         if (util.isModel (ent, "backpack.mdl")) {
-            result = graph.getNearest (game.getEntityOrigin (ent));
-
-            if (graph.exists (result)) {
-               return EntitySearchResult::Break;
-            }
-         }
-         return EntitySearchResult::Continue;
-      });
-
-      // found one ?
       if (graph.exists (result)) {
-         return m_loosedBombNodeIndex = result;
-      }
-
-      // forcing terrorist bot to not move to another bomb spot
-      if (m_inBombZone && !m_hasProgressBar && m_hasC4) {
-         return graph.getNearest (pev->origin, 768.0f, NodeFlag::Goal);
+         return result;
       }
    }
    int tactic = 0;
@@ -82,6 +62,7 @@ int Bot::findBestGoal () {
       tactic = 4;
       return findGoalPost (tactic, defensiveNodes, offensiveNodes);
    }
+   auto difficulty = static_cast <float> (m_difficulty);
 
    offensive = m_agressionLevel * 100.0f;
    defensive = m_fearLevel * 100.0f;
@@ -94,8 +75,8 @@ int Bot::findBestGoal () {
       else if (m_team == Team::CT) {
          // on hostage maps force more bots to save hostages
          if (game.mapIs (MapFlags::HostageRescue)) {
-            defensive -= 25.0f - m_difficulty * 0.5f;
-            offensive += 25.0f + m_difficulty * 5.0f;
+            defensive -= 25.0f - difficulty * 0.5f;
+            offensive += 25.0f + difficulty * 5.0f;
          }
          else {
             defensive -= 25.0f;
@@ -112,8 +93,8 @@ int Bot::findBestGoal () {
          }
          return m_chosenGoalIndex = findBombNode ();
       }
-      defensive += 25.0f + m_difficulty * 4.0f;
-      offensive -= 25.0f - m_difficulty * 0.5f;
+      defensive += 25.0f + difficulty * 4.0f;
+      offensive -= 25.0f - difficulty * 0.5f;
 
       if (m_personality != Personality::Rusher) {
          defensive += 10.0f;
@@ -121,7 +102,7 @@ int Bot::findBestGoal () {
    }
    else if (game.mapIs (MapFlags::Demolition) && m_team == Team::Terrorist && bots.getRoundStartTime () + 10.0f < game.time ()) {
       // send some terrorists to guard planted bomb
-      if (!m_defendedBomb && bots.isBombPlanted () && getCurrentTaskId () != Task::EscapeFromBomb && getBombTimeleft () >= 15.0) {
+      if (!m_defendedBomb && bots.isBombPlanted () && getCurrentTaskId () != Task::EscapeFromBomb && getBombTimeleft () >= 15.0f) {
          return pushToHistroy (m_chosenGoalIndex = graph.getNearest (graph.getBombOrigin ()));
       }
    }
@@ -162,6 +143,65 @@ int Bot::findBestGoal () {
       tactic = 3;
    }
    return pushToHistroy (findGoalPost (tactic, defensiveNodes, offensiveNodes));
+}
+
+int Bot::findBestGoalWhenBombAction () {
+   int result = kInvalidNodeIndex;
+
+   if (!bots.isBombPlanted ()) {
+      game.searchEntities ("classname", "weaponbox", [&] (edict_t *ent) {
+         if (util.isModel (ent, "backpack.mdl")) {
+            result = graph.getNearest (game.getEntityOrigin (ent));
+
+            if (graph.exists (result)) {
+               return EntitySearchResult::Break;
+            }
+         }
+         return EntitySearchResult::Continue;
+      });
+
+      // found one ?
+      if (graph.exists (result)) {
+         return m_loosedBombNodeIndex = result;
+      }
+
+      // forcing terrorist bot to not move to another bomb spot
+      if (m_inBombZone && !m_hasProgressBar && m_hasC4) {
+         return graph.getNearest (pev->origin, 1024.0f, NodeFlag::Goal);
+      }
+   }
+   else if (!m_defendedBomb) {
+      const auto &bombOrigin = graph.getBombOrigin ();
+
+      if (!bombOrigin.empty ()) {
+         m_defendedBomb = true;
+
+         result = findDefendNode (bombOrigin);
+         const Path &path = graph[result];
+
+         float bombTimer = mp_c4timer.float_ ();
+         float timeMidBlowup = bots.getTimeBombPlanted () + (bombTimer * 0.5f + bombTimer * 0.25f) - graph.calculateTravelTime (pev->maxspeed, pev->origin, path.origin);
+
+         if (timeMidBlowup > game.time ()) {
+            clearTask (Task::MoveToPosition); // remove any move tasks
+
+            startTask (Task::Camp, TaskPri::Camp, kInvalidNodeIndex, timeMidBlowup, true); // push camp task on to stack
+            startTask (Task::MoveToPosition, TaskPri::MoveToPosition, result, timeMidBlowup, true); // push  move command
+
+            // decide to duck or not to duck
+            selectCampButtons (result);
+
+            if (rg.chance (90)) {
+               pushChatterMessage (Chatter::DefendingBombsite);
+            }
+         }
+         else {
+            pushRadioMessage (Radio::ShesGonnaBlow); // issue an additional radio message
+         }
+         return result;
+      }
+   }
+   return result;
 }
 
 int Bot::findGoalPost (int tactic, IntArray *defensive, IntArray *offsensive) {
@@ -216,8 +256,7 @@ int Bot::findGoalPost (int tactic, IntArray *defensive, IntArray *offsensive) {
          postprocessGoals (graph.m_goalPoints, goalChoices);
       }
    }
-   else if (tactic == 4 && !graph.m_rescuePoints.empty ()) // rescue goal
-   {
+   else if (tactic == 4 && !graph.m_rescuePoints.empty ())  {
       // force ct with hostage(s) to select closest rescue goal
       float minDist = kInfiniteDistance;
       int count = 0;
@@ -237,13 +276,13 @@ int Bot::findGoalPost (int tactic, IntArray *defensive, IntArray *offsensive) {
 
       for (auto &choice : goalChoices) {
          if (choice == kInvalidNodeIndex) {
-             choice = graph.m_rescuePoints.random ();
+            choice = graph.m_rescuePoints.random ();
          }
       }
    }
 
    if (!graph.exists (m_currentNodeIndex)) {
-      m_currentNodeIndex = changePointIndex (findNearestNode ());
+      changeNodeIndex (findNearestNode ());
    }
 
    if (goalChoices[0] == kInvalidNodeIndex) {
@@ -277,7 +316,7 @@ void Bot::postprocessGoals (const IntArray &goals, int result[]) {
    for (int index = 0; index < 4; ++index) {
       auto goal = goals.random ();
 
-      if (searchCount <= 8 && (isBannedNode (goal) || m_prevGoalIndex == goal || ((result[0] == goal || result[1] == goal || result[2] == goal || result[3] == goal) && goals.length () > 4)) && !isOccupiedNode (goal)) {
+      if (searchCount <= 8 && (m_prevGoalIndex == goal || ((result[0] == goal || result[1] == goal || result[2] == goal || result[3] == goal) && goals.length () > 4)) && !isOccupiedNode (goal)) {
          if (index > 0) {
             index--;
          }
@@ -327,13 +366,14 @@ void Bot::ignoreCollision () {
    m_prevOrigin = pev->origin;
 }
 
-bool Bot::doPlayerAvoidance (const Vector &normal) {
-   edict_t *hindrance = nullptr;
-   float distance = cr::square (300.0f);
+void Bot::doPlayerAvoidance (const Vector &normal) {
+   m_hindrance = nullptr;
+   float distance = cr::square (348.0f);
 
-   if (getCurrentTaskId () == Task::Attack || getCurrentTaskId () == Task::SeekCover || isOnLadder ()) {
-      return false;
+   if (getCurrentTaskId () == Task::Attack || isOnLadder ()) {
+      return;
    }
+   const auto ownPrio = bots.getPlayerPriority (ent ());
 
    // find nearest player to bot
    for (const auto &client : util.getClients ()) {
@@ -352,67 +392,68 @@ bool Bot::doPlayerAvoidance (const Vector &normal) {
       if (client.team != m_team || client.ent == ent ()) {
          continue;
       }
+      const auto otherPrio = bots.getPlayerPriority (client.ent);
+
+      // give some priorities to bot avoidance
+      if (ownPrio > otherPrio) {
+         continue;
+      }
       auto nearest = client.ent->v.origin.distanceSq (pev->origin);
 
       if (nearest < cr::square (pev->maxspeed) && nearest < distance) {
-         hindrance = client.ent;
+         m_hindrance = client.ent;
          distance = nearest;
       }
    }
 
    // found somebody?
-   if (!hindrance) {
-      return false;
+   if (game.isNullEntity (m_hindrance)) {
+      return;
    }
-   const float interval = getFrameInterval () * 4.0f;
+   const float interval = m_frameInterval * 7.25f;
 
    // use our movement angles, try to predict where we should be next frame
    Vector right, forward;
    m_moveAngles.angleVectors (&forward, &right, nullptr);
-      
+
    Vector predict = pev->origin + forward * m_moveSpeed * interval;
 
    predict += right * m_strafeSpeed * interval;
    predict += pev->velocity * interval;
 
-   auto movedDistance = hindrance->v.origin.distanceSq (predict);
-   auto nextFrameDistance = pev->origin.distanceSq (hindrance->v.origin + hindrance->v.velocity * interval);
+   auto movedDistance = m_hindrance->v.origin.distanceSq (predict);
+   auto nextFrameDistance = pev->origin.distanceSq (m_hindrance->v.origin + m_hindrance->v.velocity * interval);
 
    // is player that near now or in future that we need to steer away?
    if (movedDistance <= cr::square (48.0f) || (distance <= cr::square (56.0f) && nextFrameDistance < distance)) {
-      auto dir = (pev->origin - hindrance->v.origin).normalize2d ();
+      auto dir = (pev->origin - m_hindrance->v.origin).normalize2d ();
 
       // to start strafing, we have to first figure out if the target is on the left side or right side
-      if ((dir | right.get2d ()) > 0.0f) {
+      if ((dir | right.normalize2d ()) > 0.0f) {
          setStrafeSpeed (normal, pev->maxspeed);
       }
       else {
          setStrafeSpeed (normal, -pev->maxspeed);
       }
-      if (distance < cr::square (56.0f)) {
-         if ((dir | forward.get2d ()) < 0.0f) {
+
+      if (distance < cr::square (76.0f)) {
+         if ((dir | forward.normalize2d ()) < 0.0f) {
             m_moveSpeed = -pev->maxspeed;
          }
       }
-      return true;
    }
-   return false;
 }
 
 void Bot::checkTerrain (float movedDistance, const Vector &dirNormal) {
 
    // if avoiding someone do not consider stuck
    TraceResult tr {};
-   m_isStuck = doPlayerAvoidance (dirNormal);
+   float checkSpeed = isDucking () ? 4.0f : 10.0f;
 
-   if (m_isStuck) {
-      resetCollision ();
-      return;
-   }
+   m_isStuck = false;
 
-   // Standing still, no need to check?
-   // FIXME: doesn't care for ladder movement (handled separately) should be included in some way
-   if ((m_moveSpeed >= 10.0f || m_strafeSpeed >= 10.0f) && m_lastCollTime < game.time () && m_seeEnemyTime + 0.8f < game.time () && getCurrentTaskId () != Task::Attack) {
+   // standing still, no need to check?
+   if ((m_moveSpeed >= checkSpeed || m_strafeSpeed >= checkSpeed) && m_lastCollTime < game.time ()) {
 
       // didn't we move enough previously?
       if (movedDistance < 2.0f && m_prevSpeed >= 20.0f) {
@@ -456,13 +497,10 @@ void Bot::checkTerrain (float movedDistance, const Vector &dirNormal) {
 
       // bot is stuc, but not yet decided what to do?
       if (m_collisionState == CollisionState::Undecided) {
-         int bits = 0;
+         uint32_t bits = 0;
 
          if (isOnLadder ()) {
             bits |= CollisionProbe::Strafe;
-         }
-         else if (isInWater ()) {
-            bits |= (CollisionProbe::Jump | CollisionProbe::Strafe);
          }
          else {
             bits |= (CollisionProbe::Strafe | CollisionProbe::Jump);
@@ -470,7 +508,7 @@ void Bot::checkTerrain (float movedDistance, const Vector &dirNormal) {
 
          // collision check allowed if not flying through the air
          if (isOnFloor () || isOnLadder () || isInWater ()) {
-            int state[kMaxCollideMoves * 2 + 1] {};
+            uint32_t state[kMaxCollideMoves * 2 + 1] {};
             int i = 0;
 
             Vector src {}, dst {};
@@ -578,7 +616,7 @@ void Bot::checkTerrain (float movedDistance, const Vector &dirNormal) {
                      }
                   }
                }
-               if (pev->flags & FL_DUCKING) {
+               if (isDucking ()) {
                   src = pev->origin;
                }
                else {
@@ -597,8 +635,7 @@ void Bot::checkTerrain (float movedDistance, const Vector &dirNormal) {
             ++i;
 
 #if 0
-            if (bits & CollisionProbe::Duck)
-            {
+            if (bits & CollisionProbe::Duck) {
                state[i] = 0;
 
                if (canDuckUnder (dirNormal)) {
@@ -611,7 +648,7 @@ void Bot::checkTerrain (float movedDistance, const Vector &dirNormal) {
             }
             else
 #endif
-            state[i] = 0;
+               state[i] = 0;
             ++i;
 
             // weighted all possible moves, now sort them to start with most probable
@@ -680,23 +717,113 @@ void Bot::checkTerrain (float movedDistance, const Vector &dirNormal) {
    }
 }
 
+void Bot::moveToGoal () {
+   findValidNode ();
+
+   bool prevLadder = false;
+
+   if (graph.exists (m_previousNodes[0])) {
+      if (graph[m_previousNodes[0]].flags & NodeFlag::Ladder) {
+         prevLadder = true;
+      }
+   }
+
+   // press duck button if we need to
+   if ((m_pathFlags & NodeFlag::Crouch) && !(m_pathFlags & (NodeFlag::Camp | NodeFlag::Goal))) {
+      pev->button |= IN_DUCK;
+   }
+   m_lastUsedNodesTime = game.time ();
+
+   // press jump button if we need to leave the ladder
+   if (!(m_pathFlags & NodeFlag::Ladder) && prevLadder && isOnFloor () && isOnLadder () && m_moveSpeed > 50.0f && pev->velocity.length () < 50.0f) {
+      pev->button |= IN_JUMP;
+      m_jumpTime = game.time () + 1.0f;
+   }
+
+   if (m_pathFlags & NodeFlag::Ladder) {
+      if (m_pathOrigin.z < pev->origin.z + 16.0f && !isOnLadder () && isOnFloor () && !isDucking ()) {
+         if (!prevLadder) {
+            m_moveSpeed = pev->origin.distance (m_pathOrigin);
+         }
+         else {
+            m_moveSpeed = 150.0f;
+         }
+         if (m_moveSpeed < 150.0f) {
+            m_moveSpeed = 150.0f;
+         }
+         else if (m_moveSpeed > pev->maxspeed) {
+            m_moveSpeed = pev->maxspeed;
+         }
+      }
+   }
+
+   // special movement for swimming here
+   if (isInWater ()) {
+      // check if we need to go forward or back press the correct buttons
+      if (isInFOV (m_destOrigin - getEyesPos ()) > 90.0f) {
+         pev->button |= IN_BACK;
+      }
+      else {
+         pev->button |= IN_FORWARD;
+      }
+
+      if (m_moveAngles.x > 60.0f) {
+         pev->button |= IN_DUCK;
+      }
+      else if (m_moveAngles.x < -60.0f) {
+         pev->button |= IN_JUMP;
+      }
+   }
+}
+
+void Bot::translateInput () {
+   if (m_duckTime >= game.time ()) {
+      pev->button |= IN_DUCK;
+   }
+
+   if (pev->button & IN_JUMP) {
+      m_jumpTime = game.time ();
+   }
+
+   if (m_jumpTime + 0.85f > game.time ()) {
+      if (!isOnFloor () && !isInWater () && !isOnLadder ()) {
+         pev->button |= IN_DUCK;
+      }
+   }
+
+   if (!(pev->button & (IN_FORWARD | IN_BACK))) {
+      if (m_moveSpeed > 0.0f) {
+         pev->button |= IN_FORWARD;
+      }
+      else if (m_moveSpeed < 0.0f) {
+         pev->button |= IN_BACK;
+      }
+   }
+
+   if (!(pev->button & (IN_MOVELEFT | IN_MOVERIGHT))) {
+      if (m_strafeSpeed > 0.0f) {
+         pev->button |= IN_MOVERIGHT;
+      }
+      else if (m_strafeSpeed < 0.0f) {
+         pev->button |= IN_MOVELEFT;
+      }
+   }
+}
+
 bool Bot::updateNavigation () {
    // this function is a main path navigation
 
    // check if we need to find a node...
    if (m_currentNodeIndex == kInvalidNodeIndex) {
       findValidNode ();
-      m_pathOrigin = m_path->origin;
-      
+
       // if graph node radius non zero vary origin a bit depending on the body angles
       if (m_path->radius > 0.0f) {
-         m_pathOrigin += Vector (pev->angles.x, cr::normalizeAngles (pev->angles.y + rg.get (-90.0f, 90.0f)), 0.0f).forward () * rg.get (0.0f, m_path->radius);
+         m_pathOrigin += Vector (pev->angles.x, cr::wrapAngle (pev->angles.y + rg.get (-90.0f, 90.0f)), 0.0f).forward () * rg.get (0.0f, m_path->radius);
       }
       m_navTimeset = game.time ();
    }
    m_destOrigin = m_pathOrigin + pev->view_ofs;
-
-   float nodeDistance = pev->origin.distance (m_pathOrigin);
 
    // this node has additional travel flags - care about them
    if (m_currentTravelFlags & PathFlag::Jump) {
@@ -707,7 +834,9 @@ bool Bot::updateNavigation () {
          // if bot's on the ground or on the ladder we're free to jump. actually setting the correct velocity is cheating.
          // pressing the jump button gives the illusion of the bot actual jumping.
          if (isOnFloor () || isOnLadder ()) {
-            pev->velocity = m_desiredVelocity;
+            if (m_desiredVelocity.length2d () > 0.0f) {
+               pev->velocity = m_desiredVelocity + m_desiredVelocity * 0.05f;
+            }
             pev->button |= IN_JUMP;
 
             m_jumpFinished = true;
@@ -717,27 +846,110 @@ bool Bot::updateNavigation () {
       }
       else if (!cv_jasonmode.bool_ () && usesKnife () && isOnFloor ()) {
          selectBestWeapon ();
+
+         // if jump distance was big enough, cooldown a little
+         if (m_jumpDistance > 180.0f) {
+            startTask (Task::Pause, TaskPri::Pause, kInvalidNodeIndex, game.time () + 0.45f, false);
+         }
+         m_jumpDistance = 0.0f;
       }
    }
 
-   if (m_path->flags & NodeFlag::Ladder) {
-      if (m_pathOrigin.z >= (pev->origin.z + 16.0f)) {
-         m_pathOrigin = m_path->origin + Vector (0.0f, 0.0f, 16.0f);
+   if (m_pathFlags & NodeFlag::Ladder) {
+      if (!m_pathWalk.empty ()) {
+         if (m_pathWalk.hasNext ()) {
+            if (graph[m_pathWalk.next ()].flags & NodeFlag::Ladder || isOnLadder ()) {
+               m_path->radius = 17.0f;
+            }
+         }
       }
-      else if (m_pathOrigin.z < pev->origin.z + 16.0f && !isOnLadder () && isOnFloor () && !(pev->flags & FL_DUCKING)) {
-         m_moveSpeed = nodeDistance;
 
-         if (m_moveSpeed < 150.0f) {
-            m_moveSpeed = 150.0f;
+      if (graph.exists (m_previousNodes[0]) && (graph[m_previousNodes[0]].flags & NodeFlag::Ladder)) {
+         if (cr::abs (m_pathOrigin.z - pev->origin.z) > 5.0f) {
+            m_pathOrigin.z += pev->origin.z - m_pathOrigin.z;
          }
-         else if (m_moveSpeed > pev->maxspeed) {
-            m_moveSpeed = pev->maxspeed;
+         if (m_pathOrigin.z > (pev->origin.z + 16.0f)) {
+            m_pathOrigin = m_pathOrigin - Vector (0.0f, 0.0f, 16.0f);
          }
+         if (m_pathOrigin.z < (pev->origin.z - 16.0f)) {
+            m_pathOrigin = m_pathOrigin + Vector (0.0f, 0.0f, 16.0f);
+         }
+      }
+      m_destOrigin = m_pathOrigin;
+
+      // special detection if someone is using the ladder (to prevent to have bots-towers on ladders)
+      for (const auto &client : util.getClients ()) {
+         if (!(client.flags & ClientFlags::Used) || !(client.flags & ClientFlags::Alive) || (client.ent->v.movetype != MOVETYPE_FLY) || client.ent == nullptr || client.ent == ent ()) {
+            continue;
+         }
+         TraceResult tr {};
+         bool foundGround = false;
+         int previousNode = 0;
+
+         // more than likely someone is already using our ladder...
+         if (client.ent->v.origin.distance (m_path->origin) < 40.0f) {
+            if ((client.team != m_team || game.is (GameFlags::FreeForAll)) && !cv_ignore_enemies.bool_ ()) {
+               game.testLine (getEyesPos (), client.ent->v.origin, TraceIgnore::Monsters, ent (), &tr);
+
+               // bot found an enemy on his ladder - he should see him...
+               if (tr.pHit == client.ent) {
+                  m_enemy = client.ent;
+                  m_lastEnemy = client.ent;
+                  m_lastEnemyOrigin = client.ent->v.origin;
+
+                  m_enemyParts = Visibility::None;
+                  m_enemyParts |= (Visibility::Head | Visibility::Body);
+
+                  m_states |= Sense::SeeingEnemy;
+                  m_seeEnemyTime = game.time ();
+                  break;
+               }
+            }
+            else {
+               game.testHull (getEyesPos (), m_pathOrigin, TraceIgnore::Monsters, isDucking () ? head_hull : human_hull, ent (), &tr);
+
+               // someone is above or below us and is using the ladder already
+               if (tr.pHit == client.ent && cr::abs (pev->origin.z - client.ent->v.origin.z) > 15.0f && (client.ent->v.movetype == MOVETYPE_FLY)) {
+                  if (graph.exists (m_previousNodes[0])) {
+                     if (!(graph[m_previousNodes[0]].flags & NodeFlag::Ladder)) {
+                        foundGround = true;
+                        previousNode = m_previousNodes[0];
+                     }
+                     else if (graph.exists (m_previousNodes[1])) {
+                        if (!(graph[m_previousNodes[1]].flags & NodeFlag::Ladder)) {
+                           foundGround = true;
+                           previousNode = m_previousNodes[1];
+                        }
+                        else if (graph.exists (m_previousNodes[2])) {
+                           if (!(graph[m_previousNodes[2]].flags & NodeFlag::Ladder)) {
+                              foundGround = true;
+                              previousNode = m_previousNodes[2];
+                           }
+                           else if (graph.exists (m_previousNodes[3])) {
+                              if (!(graph[m_previousNodes[3]].flags & NodeFlag::Ladder)) {
+                                 foundGround = true;
+                                 previousNode = m_previousNodes[3];
+                              }
+                           }
+                        }
+                     }
+                  }
+                  if (foundGround) {
+                     if (getCurrentTaskId () != Task::MoveToPosition || !cr::fequal (getTask ()->desire, TaskPri::PlantBomb)) {
+                        changeNodeIndex (m_previousNodes[0]);
+                        startTask (Task::MoveToPosition, TaskPri::PlantBomb, previousNode, 0.0f, true);
+                     }
+                     break;
+                  }
+               }
+            }
+         }
+
       }
    }
 
    // special lift handling (code merged from podbotmm)
-   if (m_path->flags & NodeFlag::Lift) {
+   if (m_pathFlags & NodeFlag::Lift) {
       if (updateLiftHandling ()) {
          if (!updateLiftStates ()) {
             return false;
@@ -808,23 +1020,28 @@ bool Bot::updateNavigation () {
          }
       }
    }
-   float desiredDistance = 0.0f;
+
+   float desiredDistance = 8.0f;
+   float nodeDistance = pev->origin.distance (m_pathOrigin);
 
    // initialize the radius for a special node type, where the node is considered to be reached
-   if (m_path->flags & NodeFlag::Lift) {
+   if (m_pathFlags & NodeFlag::Lift) {
       desiredDistance = 50.0f;
    }
-   else if ((pev->flags & FL_DUCKING) || (m_path->flags & NodeFlag::Goal)) {
+   else if (isDucking () || (m_pathFlags & NodeFlag::Goal)) {
       desiredDistance = 25.0f;
    }
-   else if (m_path->flags & NodeFlag::Ladder) {
-      desiredDistance = 15.0f;
+   else if (m_pathFlags & NodeFlag::Ladder) {
+      desiredDistance = 24.0f;
    }
    else if (m_currentTravelFlags & PathFlag::Jump) {
       desiredDistance = 0.0f;
    }
    else if (m_path->number == cv_debug_goal.int_ ()) {
       desiredDistance = 0.0f;
+   }
+   else if (isOccupiedNode (m_path->number)) {
+      desiredDistance = 72.0f;
    }
    else {
       desiredDistance = m_path->radius;
@@ -837,9 +1054,9 @@ bool Bot::updateNavigation () {
          break;
       }
    }
-   
+
    // needs precise placement - check if we get past the point
-   if (desiredDistance < 22.0f && nodeDistance < 30.0f && m_pathOrigin.distanceSq (pev->origin + pev->velocity * getFrameInterval ()) >= cr::square (nodeDistance)) {
+   if (desiredDistance < 22.0f && nodeDistance < 30.0f && m_pathOrigin.distanceSq (pev->origin + pev->velocity * m_frameInterval) >= cr::square (nodeDistance)) {
       desiredDistance = nodeDistance + 1.0f;
    }
 
@@ -851,7 +1068,7 @@ bool Bot::updateNavigation () {
       getTask ()->data = kInvalidNodeIndex;
       clearSearchNodes ();
 
-      return false;
+      return true;
    }
 
    if (nodeDistance < desiredDistance) {
@@ -924,7 +1141,7 @@ bool Bot::updateLiftHandling () {
    };
 
    // trace line to door
-   game.testLine (pev->origin, m_path->origin, TraceIgnore::Everything, ent (), &tr);
+   game.testLine (pev->origin, m_pathOrigin, TraceIgnore::Everything, ent (), &tr);
 
    if (tr.flFraction < 1.0f && tr.pHit && strcmp (tr.pHit->v.classname.chars (), "func_door") == 0 && (m_liftState == LiftState::None || m_liftState == LiftState::WaitingFor || m_liftState == LiftState::LookingButtonOutside) && pev->groundentity != tr.pHit) {
       if (m_liftState == LiftState::None) {
@@ -935,7 +1152,7 @@ bool Bot::updateLiftHandling () {
    }
 
    // trace line down
-   game.testLine (m_path->origin, m_path->origin + Vector (0.0f, 0.0f, -50.0f), TraceIgnore::Everything, ent (), &tr);
+   game.testLine (m_path->origin, m_pathOrigin + Vector (0.0f, 0.0f, -50.0f), TraceIgnore::Everything, ent (), &tr);
 
    // if trace result shows us that it is a lift
    if (!game.isNullEntity (tr.pHit) && !m_pathWalk.empty () && (strcmp (tr.pHit->v.classname.chars (), "func_door") == 0 || strcmp (tr.pHit->v.classname.chars (), "func_plat") == 0 || strcmp (tr.pHit->v.classname.chars (), "func_train") == 0) && !liftClosedDoorExists) {
@@ -943,7 +1160,7 @@ bool Bot::updateLiftHandling () {
          if (cr::abs (pev->origin.z - tr.vecEndPos.z) < 70.0f) {
             m_liftEntity = tr.pHit;
             m_liftState = LiftState::EnteringIn;
-            m_liftTravelPos = m_path->origin;
+            m_liftTravelPos = m_pathOrigin;
             m_liftUsageTime = game.time () + 5.0f;
          }
       }
@@ -1091,7 +1308,7 @@ bool Bot::updateLiftHandling () {
          }
       }
       else if (!game.isNullEntity (m_liftEntity)) {
-        auto button = lookupButton (m_liftEntity->v.targetname.chars ());
+         auto button = lookupButton (m_liftEntity->v.targetname.chars ());
 
          // if we got a valid button entity
          if (!game.isNullEntity (button)) {
@@ -1165,7 +1382,7 @@ bool Bot::updateLiftHandling () {
             m_liftUsageTime = 0.0f;
 
             clearSearchNodes ();
-            findBestNearestNode ();
+            findNextBestNode ();
 
             if (graph.exists (m_previousNodes[2])) {
                findPath (m_currentNodeIndex, m_previousNodes[2], FindPath::Fast);
@@ -1178,7 +1395,7 @@ bool Bot::updateLiftHandling () {
 }
 
 bool Bot::updateLiftStates () {
-   if (!game.isNullEntity (m_liftEntity) && !(m_path->flags & NodeFlag::Lift)) {
+   if (!game.isNullEntity (m_liftEntity) && !(m_pathFlags & NodeFlag::Lift)) {
       if (m_liftState == LiftState::TravelingBy) {
          m_liftState = LiftState::Leaving;
          m_liftUsageTime = game.time () + 10.0f;
@@ -1200,14 +1417,14 @@ bool Bot::updateLiftStates () {
 
       if (graph.exists (m_previousNodes[0])) {
          if (!(graph[m_previousNodes[0]].flags & NodeFlag::Lift)) {
-            changePointIndex (m_previousNodes[0]);
+            changeNodeIndex (m_previousNodes[0]);
          }
          else {
-            findBestNearestNode ();
+            findNextBestNode ();
          }
       }
       else {
-         findBestNearestNode ();
+         findNextBestNode ();
       }
       return false;
    }
@@ -1217,7 +1434,7 @@ bool Bot::updateLiftStates () {
 void Bot::findShortestPath (int srcIndex, int destIndex) {
    // this function finds the shortest path from source index to destination index
 
-   if (!graph.exists (srcIndex)){
+   if (!graph.exists (srcIndex)) {
       logger.error ("%s source path index not valid (%d).", __FUNCTION__, srcIndex);
       return;
    }
@@ -1249,7 +1466,7 @@ void Bot::findPath (int srcIndex, int destIndex, FindPath pathType /*= FindPath:
    // this function finds a path from srcIndex to destIndex
 
    auto dangerFactor = [&] () -> float {
-      return rg.get (cv_path_danger_factor_min.float_ (), cv_path_danger_factor_max.float_ ()) * 2.0f / cr::clamp (m_difficulty, 1, 3);
+      return rg.get (cv_path_danger_factor_min.float_ (), cv_path_danger_factor_max.float_ ()) * 2.0f / cr::clamp (static_cast <float> (m_difficulty), 1.0f, 4.0f);
    };
 
    // least kills and number of nodes to goal for a team
@@ -1327,11 +1544,13 @@ void Bot::findPath (int srcIndex, int destIndex, FindPath pathType /*= FindPath:
 
       for (const auto &link : parent.links) {
          if (link.index == currentIndex) {
+            const auto distance = static_cast <float> (link.distance);
+
             // we don't like ladder or crouch point
             if (current.flags & (NodeFlag::Crouch | NodeFlag::Ladder)) {
-               return link.distance * 1.5f;
+               return distance * 1.5f;
             }
-            return static_cast <float> (link.distance);
+            return distance;
          }
       }
       return 65355.0f;
@@ -1401,6 +1620,12 @@ void Bot::findPath (int srcIndex, int destIndex, FindPath pathType /*= FindPath:
    else if (!graph.exists (destIndex)) {
 
       logger.error ("%s destination path index not valid (%d).", __FUNCTION__, destIndex);
+      return;
+   }
+
+   // astar needs some nodes to work with
+   if (graph.length () < kMaxNodeLinks) {
+      logger.error ("A* Search for bot \"%s\" has failed due to too small number of nodes (%d). Seems to be graph is broken.", pev->netname.chars (), graph.length ());
       return;
    }
 
@@ -1498,9 +1723,9 @@ void Bot::findPath (int srcIndex, int destIndex, FindPath pathType /*= FindPath:
          auto childRoute = &m_routes[child.index];
 
          // calculate the F value as F = G + H
-         float g = curRoute->g + gcalc (m_team, child.index, currentIndex);
-         float h = hcalc (child.index, srcIndex, destIndex);
-         float f = g + h;
+         const float g = curRoute->g + gcalc (m_team, child.index, currentIndex);
+         const float h = hcalc (child.index, srcIndex, destIndex);
+         const float f = g + h;
 
          if (childRoute->state == RouteState::New || childRoute->f > f) {
             // put the current child into open list
@@ -1526,7 +1751,7 @@ void Bot::clearSearchNodes () {
 }
 
 void Bot::clearRoute () {
-   m_routes.resize (graph.length ());
+   m_routes.resize (static_cast <size_t> (graph.length ()));
 
    for (int i = 0; i < graph.length (); ++i) {
       auto route = &m_routes[i];
@@ -1538,11 +1763,11 @@ void Bot::clearRoute () {
    m_routes.clear ();
 }
 
-int Bot::findAimingNode (const Vector &to) {
+int Bot::findAimingNode (const Vector &to, int &pathLength) {
    // return the most distant node which is seen from the bot to the target and is within count
 
    if (m_currentNodeIndex == kInvalidNodeIndex) {
-      m_currentNodeIndex = changePointIndex (findNearestNode ());
+      changeNodeIndex (findNearestNode ());
    }
 
    int destIndex = graph.getNearest (to);
@@ -1551,15 +1776,16 @@ int Bot::findAimingNode (const Vector &to) {
    if (destIndex == kInvalidNodeIndex) {
       return kInvalidNodeIndex;
    }
- 
+
    while (destIndex != m_currentNodeIndex) {
       destIndex = (graph.m_matrix.data () + (destIndex * graph.length ()) + m_currentNodeIndex)->index;
 
       if (destIndex < 0) {
          break;
       }
+      ++pathLength;
 
-      if (graph.isVisible (m_currentNodeIndex, destIndex) && graph.isVisible (destIndex, m_currentNodeIndex)) {
+      if (graph.isVisible (m_currentNodeIndex, destIndex)) {
          bestIndex = destIndex;
          break;
       }
@@ -1571,7 +1797,7 @@ int Bot::findAimingNode (const Vector &to) {
    return bestIndex;
 }
 
-bool Bot::findBestNearestNode () {
+bool Bot::findNextBestNode () {
    // this function find a node in the near of the bot if bot had lost his path of pathfinder needs
    // to be restarted over again.
 
@@ -1581,7 +1807,7 @@ bool Bot::findBestNearestNode () {
    int lessIndex[3] = { kInvalidNodeIndex, kInvalidNodeIndex , kInvalidNodeIndex };
 
    auto &bucket = graph.getNodesInBucket (pev->origin);
-   int numToSkip = cr::clamp (rg.get (0, 3), 0, static_cast <int> (bucket.length () / 2));
+   int numToSkip = cr::clamp (rg.get (0, 2), 0, static_cast <int> (bucket.length () / 2));
 
    for (const int at : bucket) {
       bool skip = !!(at == m_currentNodeIndex);
@@ -1609,13 +1835,13 @@ bool Bot::findBestNearestNode () {
          continue;
       }
 
-	  // check we're have link to it
+      // check we're have link to it
       if (m_currentNodeIndex != kInvalidNodeIndex && !graph.isConnected (m_currentNodeIndex, at)) {
          continue;
       }
 
       // ignore non-reacheable nodes...
-      if (!isReachableNode (at) || isBannedNode (at)) {
+      if (!isReachableNode (at)) {
          continue;
       }
 
@@ -1676,25 +1902,14 @@ bool Bot::findBestNearestNode () {
    if (selected == kInvalidNodeIndex) {
       selected = findNearestNode ();
    }
-   m_goalHistory.push (selected);
-   changePointIndex (selected);
+   m_nodeHistory.push (selected);
+   changeNodeIndex (selected);
 
    return true;
 }
 
-float Bot::getReachTime () {
-   auto task = getCurrentTaskId ();
-   float estimatedTime = 0.0f; 
-
-   switch (task) {
-   case Task::Pause:
-   case Task::Camp:
-   case Task::Hide:
-      return 0.0f;
-
-   default:
-      estimatedTime = 2.8f; // time to reach next node
-   }
+float Bot::getEstimatedNodeReachTime () {
+   float estimatedTime = 2.8f;
 
    // calculate 'real' time that we need to get from one node to another
    if (graph.exists (m_currentNodeIndex) && graph.exists (m_previousNodes[0])) {
@@ -1707,7 +1922,7 @@ float Bot::getReachTime () {
       else {
          estimatedTime = 3.0f * distance / pev->maxspeed;
       }
-      bool longTermReachability = (m_path->flags & NodeFlag::Crouch) || (m_path->flags & NodeFlag::Ladder) || (pev->button & IN_DUCK) || (m_oldButtons & IN_DUCK);
+      bool longTermReachability = (m_pathFlags & NodeFlag::Crouch) || (m_pathFlags & NodeFlag::Ladder) || (pev->button & IN_DUCK) || (m_oldButtons & IN_DUCK);
 
       // check for special nodes, that can slowdown our movement
       if (longTermReachability) {
@@ -1715,7 +1930,7 @@ float Bot::getReachTime () {
       }
       estimatedTime = cr::clamp (estimatedTime, 2.0f, longTermReachability ? 8.0f : 5.0f);
    }
-   return estimatedTime;
+   return estimatedTime + m_frameInterval;
 }
 
 void Bot::findValidNode () {
@@ -1724,11 +1939,9 @@ void Bot::findValidNode () {
    // if bot hasn't got a node we need a new one anyway or if time to get there expired get new one as well
    if (m_currentNodeIndex == kInvalidNodeIndex) {
       clearSearchNodes ();
-      findBestNearestNode ();
-
-      m_pathOrigin = m_path->origin;
+      findNextBestNode ();
    }
-   else if (m_navTimeset + getReachTime () < game.time () && game.isNullEntity (m_enemy)) {
+   else if (m_navTimeset + getEstimatedNodeReachTime () < game.time () && game.isNullEntity (m_enemy)) {
 
       // increase danager for both teams
       for (int team = Team::Terrorist; team < kGameTeamNum; ++team) {
@@ -1747,13 +1960,11 @@ void Bot::findValidNode () {
          graph.setDangerDamage (m_team, m_currentNodeIndex, m_currentNodeIndex, damageValue);
       }
       clearSearchNodes ();
-      findBestNearestNode ();
-
-      m_pathOrigin = m_path->origin;
+      findNextBestNode ();
    }
 }
 
-int Bot::changePointIndex (int index) {
+int Bot::changeNodeIndex (int index) {
    if (index == kInvalidNodeIndex) {
       return 0;
    }
@@ -1763,11 +1974,14 @@ int Bot::changePointIndex (int index) {
    m_previousNodes[0] = m_currentNodeIndex;
 
    m_currentNodeIndex = index;
+
    m_navTimeset = game.time ();
+   m_collideTime = game.time ();
 
-   m_path = &graph[index];
+   m_path = &graph[m_currentNodeIndex];
    m_pathFlags = m_path->flags;
-
+   m_pathOrigin = m_path->origin;
+   
    return m_currentNodeIndex; // to satisfy static-code analyzers
 }
 
@@ -1788,10 +2002,23 @@ int Bot::findNearestNode () {
       if (distance < minimum) {
 
          // if bot doing navigation, make sure node really visible and not too high
-         if ((m_currentNodeIndex != kInvalidNodeIndex && graph.isVisible (m_currentNodeIndex, at)) || isReachableNode (at)) {
+         if ((m_currentNodeIndex != kInvalidNodeIndex && graph.isVisible (m_currentNodeIndex, at) && graph.isVisible (at, m_currentNodeIndex)) || isReachableNode (at)) {
             index = at;
             minimum = distance;
          }
+
+         // @pr-419: temporarily disabled due to cpu usage
+#if 0
+         else {
+            TraceResult tr {};
+            game.testHull (getEyesPos (), graph[at].origin, TraceIgnore::Monsters, head_hull, ent (), &tr);
+
+            if (tr.flFraction >= 1.0f && !tr.fStartSolid) {
+               index = at;
+               minimum = distance;
+            }
+         }
+#endif
       }
    }
 
@@ -1858,7 +2085,7 @@ int Bot::findDefendNode (const Vector &origin) {
    // provides enough cover point, and is far away from the defending position
 
    if (m_currentNodeIndex == kInvalidNodeIndex) {
-      m_currentNodeIndex = changePointIndex (findNearestNode ());
+      changeNodeIndex (findNearestNode ());
    }
    TraceResult tr {};
 
@@ -1873,6 +2100,9 @@ int Bot::findDefendNode (const Vector &origin) {
    int posIndex = graph.getNearest (origin);
    int srcIndex = m_currentNodeIndex;
 
+   // max search distance
+   const int kMaxDistance = cr::clamp (148 * bots.getBotCount (), 256, 1024);
+
    // some of points not found, return random one
    if (srcIndex == kInvalidNodeIndex || posIndex == kInvalidNodeIndex) {
       return rg.get (0, graph.length () - 1);
@@ -1881,29 +2111,60 @@ int Bot::findDefendNode (const Vector &origin) {
    // find the best node now
    for (int i = 0; i < graph.length (); ++i) {
       // exclude ladder & current nodes
-      if ((graph[i].flags & NodeFlag::Ladder) || i == srcIndex || !graph.isVisible (i, posIndex) || isOccupiedNode (i)) {
+      if ((graph[i].flags & NodeFlag::Ladder) || i == srcIndex || !graph.isVisible (i, posIndex)) {
          continue;
       }
 
       // use the 'real' pathfinding distances
       int distance = graph.getPathDist (srcIndex, i);
 
-      // skip wayponts with distance more than 512 units
-      if (distance > 1024) {
+      // skip wayponts too far
+      if (distance > kMaxDistance) {
          continue;
       }
-      game.testLine (graph[i].origin, graph[posIndex].origin, TraceIgnore::Everything, ent (), &tr);
+
+      // skip occupied points
+      if (isOccupiedNode (i)) {
+         continue;
+      }
+      game.testLine (graph[i].origin, graph[posIndex].origin, TraceIgnore::Glass, ent (), &tr);
 
       // check if line not hit anything
       if (!cr::fequal (tr.flFraction, 1.0f)) {
          continue;
       }
 
-      for (int j = 0; j < kMaxNodeLinks; ++j) {
-         if (distance > minDistance[j]) {
-            nodeIndex[j] = i;
-            minDistance[j] = distance;
-         }
+      if (distance > minDistance[0]) {
+         nodeIndex[0] = i;
+         minDistance[0] = distance;
+      }
+      else if (distance > minDistance[1]) {
+         nodeIndex[1] = i;
+         minDistance[1] = distance;
+      }
+      else if (distance > minDistance[2]) {
+         nodeIndex[2] = i;
+         minDistance[2] = distance;
+      }
+      else if (distance > minDistance[3]) {
+         nodeIndex[3] = i;
+         minDistance[3] = distance;
+      }
+      else if (distance > minDistance[4]) {
+         nodeIndex[4] = i;
+         minDistance[4] = distance;
+      }
+      else if (distance > minDistance[5]) {
+         nodeIndex[5] = i;
+         minDistance[5] = distance;
+      }
+      else if (distance > minDistance[6]) {
+         nodeIndex[6] = i;
+         minDistance[6] = distance;
+      }
+      else if (distance > minDistance[7]) {
+         nodeIndex[7] = i;
+         minDistance[7] = distance;
       }
    }
 
@@ -1924,11 +2185,13 @@ int Bot::findDefendNode (const Vector &origin) {
       sorting = false;
 
       // completely sort the data
-      for (int i = 0; i < 3 && nodeIndex[i] != kInvalidNodeIndex && nodeIndex[i + 1] != kInvalidNodeIndex && minDistance[i] > minDistance[i + 1]; ++i) {
-         cr::swap (nodeIndex[i], nodeIndex[i + 1]);
-         cr::swap (minDistance[i], minDistance[i + 1]);
+      for (int i = 0; i < kMaxNodeLinks - 1; ++i) {
+         if (nodeIndex[i] != kInvalidNodeIndex && nodeIndex[i + 1] != kInvalidNodeIndex && minDistance[i] > minDistance[i + 1]) {
+            cr::swap (nodeIndex[i], nodeIndex[i + 1]);
+            cr::swap (minDistance[i], minDistance[i + 1]);
 
-         sorting = true;
+            sorting = true;
+         }
       }
    } while (sorting);
 
@@ -1936,7 +2199,7 @@ int Bot::findDefendNode (const Vector &origin) {
       IntArray found;
 
       for (int i = 0; i < graph.length (); ++i) {
-         if (origin.distanceSq (graph[i].origin) <= cr::square (1248.0f) && !graph.isVisible (i, posIndex) && !isOccupiedNode (i)) {
+         if (origin.distanceSq (graph[i].origin) < cr::square (static_cast <float> (kMaxDistance)) && !graph.isVisible (i, posIndex) && !isOccupiedNode (i)) {
             found.push (i);
          }
       }
@@ -1953,7 +2216,7 @@ int Bot::findDefendNode (const Vector &origin) {
          break;
       }
    }
-   return nodeIndex[rg.get (0, (index -1) / 2)];
+   return nodeIndex[rg.get (0, (index - 1) / 2)];
 }
 
 int Bot::findCoverNode (float maxDistance) {
@@ -1995,7 +2258,7 @@ int Bot::findCoverNode (float maxDistance) {
    }
 
    // ensure we're on valid point
-   changePointIndex (srcIndex);
+   changeNodeIndex (srcIndex);
 
    // find the best node now
    for (int i = 0; i < graph.length (); ++i) {
@@ -2018,20 +2281,44 @@ int Bot::findCoverNode (float maxDistance) {
       }
 
       // use the 'real' pathfinding distances
-      int distances = graph.getPathDist (srcIndex, i);
+      int distance = graph.getPathDist (srcIndex, i);
       int enemyDistance = graph.getPathDist (enemyIndex, i);
 
-      if (distances >= enemyDistance) {
+      if (distance >= enemyDistance) {
          continue;
       }
 
-      for (int j = 0; j < kMaxNodeLinks; ++j) {
-         if (distances < minDistance[j]) {
-            nodeIndex[j] = i;
-            minDistance[j] = distances;
-
-            break;
-         }
+      if (distance < minDistance[0]) {
+         nodeIndex[0] = i;
+         minDistance[0] = distance;
+      }
+      else if (distance < minDistance[1]) {
+         nodeIndex[1] = i;
+         minDistance[1] = distance;
+      }
+      else if (distance < minDistance[2]) {
+         nodeIndex[2] = i;
+         minDistance[2] = distance;
+      }
+      else if (distance < minDistance[3]) {
+         nodeIndex[3] = i;
+         minDistance[3] = distance;
+      }
+      else if (distance < minDistance[4]) {
+         nodeIndex[4] = i;
+         minDistance[4] = distance;
+      }
+      else if (distance < minDistance[5]) {
+         nodeIndex[5] = i;
+         minDistance[5] = distance;
+      }
+      else if (distance < minDistance[6]) {
+         nodeIndex[6] = i;
+         minDistance[6] = distance;
+      }
+      else if (distance < minDistance[7]) {
+         nodeIndex[7] = i;
+         minDistance[7] = distance;
       }
    }
 
@@ -2051,11 +2338,13 @@ int Bot::findCoverNode (float maxDistance) {
    do {
       sorting = false;
 
-      for (int i = 0; i < 3 && nodeIndex[i] != kInvalidNodeIndex && nodeIndex[i + 1] != kInvalidNodeIndex && minDistance[i] > minDistance[i + 1]; ++i) {
-         cr::swap (nodeIndex[i], nodeIndex[i + 1]);
-         cr::swap (minDistance[i], minDistance[i + 1]);
+      for (int i = 0; i < kMaxNodeLinks - 1; ++i) {
+         if (nodeIndex[i] != kInvalidNodeIndex && nodeIndex[i + 1] != kInvalidNodeIndex && minDistance[i] > minDistance[i + 1]) {
+            cr::swap (nodeIndex[i], nodeIndex[i + 1]);
+            cr::swap (minDistance[i], minDistance[i + 1]);
 
-         sorting = true;
+            sorting = true;
+         }
       }
    } while (sorting);
 
@@ -2111,16 +2400,16 @@ bool Bot::advanceMovement () {
    // advances in our pathfinding list and sets the appropiate destination origins for this bot
 
    findValidNode (); // check if old nodes is still reliable
-   
+
    // no nodes from pathfinding?
    if (m_pathWalk.empty ()) {
       return false;
    }
    TraceResult tr {};
-   
+
    m_pathWalk.shift (); // advance in list
    m_currentTravelFlags = 0; // reset travel flags (jumping etc)
-   
+
    // helper to change bot's goal
    auto changeNextGoal = [&] {
       int newGoal = findBestGoal ();
@@ -2203,7 +2492,7 @@ bool Bot::advanceMovement () {
             }
             // check if bot is going to jump
             bool willJump = false;
-            float jumpDistance = 0.0f;
+            m_jumpDistance = 0.0f;
 
             Vector src;
             Vector dst;
@@ -2212,15 +2501,15 @@ bool Bot::advanceMovement () {
             if (m_pathWalk.hasNext ()) {
                auto nextIndex = m_pathWalk.next ();
 
-               const Path &path = graph[destIndex];
-               const Path &next = graph[nextIndex];
+               const auto &path = graph[destIndex];
+               const auto &next = graph[nextIndex];
 
                for (const auto &link : path.links) {
                   if (link.index == nextIndex && (link.flags & PathFlag::Jump)) {
                      src = path.origin;
                      dst = next.origin;
 
-                     jumpDistance = path.origin.distance (next.origin);
+                     m_jumpDistance = path.origin.distance (next.origin);
                      willJump = true;
 
                      break;
@@ -2229,14 +2518,14 @@ bool Bot::advanceMovement () {
             }
 
             // is there a jump node right ahead and do we need to draw out the light weapon ?
-            if (willJump && !usesKnife () && m_currentWeapon != Weapon::Scout && !m_isReloading && !usesPistol () && (jumpDistance > 200.0f || (dst.z - 32.0f > src.z && jumpDistance > 150.0f)) && !(m_states & (Sense::SeeingEnemy | Sense::SuspectEnemy))) {
-               selectWeaponByName ("weapon_knife"); // draw out the knife if we needed
+            if (willJump && !usesKnife () && m_currentWeapon != Weapon::Scout && !m_isReloading && !usesPistol () && (m_jumpDistance > 175.0f || (dst.z - 32.0f > src.z && m_jumpDistance > 135.0f)) && !(m_states & Sense::SeeingEnemy)) {
+               selectWeaponById (Weapon::Knife); // draw out the knife if we needed
             }
 
             // bot not already on ladder but will be soon?
             if ((graph[destIndex].flags & NodeFlag::Ladder) && !isOnLadder ()) {
-               // get ladder nodes used by other (first moving) bots
 
+               // get ladder nodes used by other (first moving) bots
                for (const auto &other : bots) {
                   // if another bot uses this ladder, wait 3 secs
                   if (other.get () != this && other->m_notKilled && other->m_currentNodeIndex == destIndex) {
@@ -2246,14 +2535,13 @@ bool Bot::advanceMovement () {
                }
             }
          }
-         changePointIndex (destIndex);
+         changeNodeIndex (destIndex);
       }
    }
-   m_pathOrigin = m_path->origin;
 
    // if wayzone radius non zero vary origin a bit depending on the body angles
    if (m_path->radius > 0.0f) {
-      m_pathOrigin += Vector (pev->angles.x, cr::normalizeAngles (pev->angles.y + rg.get (-90.0f, 90.0f)), 0.0f).forward () * rg.get (0.0f, m_path->radius);
+      m_pathOrigin += Vector (pev->angles.x, cr::wrapAngle (pev->angles.y + rg.get (-90.0f, 90.0f)), 0.0f).forward () * rg.get (0.0f, m_path->radius);
    }
 
    if (isOnLadder ()) {
@@ -2274,17 +2562,17 @@ bool Bot::cantMoveForward (const Vector &normal, TraceResult *tr) {
    // use some TraceLines to determine if anything is blocking the current path of the bot.
 
    // first do a trace from the bot's eyes forward...
-   Vector src = getEyesPos ();
-   Vector forward = src + normal * 24.0f;
-
+   auto src = getEyesPos ();
+   auto forward = src + normal * 24.0f;
    const auto &right = Vector (0.0f, pev->angles.y, 0.0f).right ();
+
    bool traceResult = false;
 
-   auto checkDoor = [&traceResult] (TraceResult *tr) {
+   auto checkDoor = [&traceResult] (TraceResult *result) {
       if (!game.mapIs (MapFlags::HasDoors)) {
          return false;
       }
-      return !traceResult && tr->flFraction < 1.0f && strncmp ("func_door", tr->pHit->v.classname.chars (), 9) != 0;
+      return !traceResult && result->flFraction < 1.0f && strncmp ("func_door", result->pHit->v.classname.chars (), 9) != 0;
    };
 
    // trace from the bot's eyes straight forward...
@@ -2323,7 +2611,7 @@ bool Bot::cantMoveForward (const Vector &normal, TraceResult *tr) {
    }
 
    // now check below waist
-   if (pev->flags & FL_DUCKING) {
+   if (isDucking ()) {
       src = pev->origin + Vector (0.0f, 0.0f, -19.0f + 19.0f);
       forward = src + Vector (0.0f, 0.0f, 10.0f) + normal * 24.0f;
 
@@ -2441,8 +2729,8 @@ bool Bot::canJumpUp (const Vector &normal) {
    const auto &right = Vector (0.0f, pev->angles.y, 0.0f).right (); // convert current view angle to vectors for traceline math...
 
    // check for normal jump height first...
-   Vector src = pev->origin + Vector (0.0f, 0.0f, -36.0f + 45.0f);
-   Vector dest = src + normal * 32.0f;
+   auto src = pev->origin + Vector (0.0f, 0.0f, -36.0f + 45.0f);
+   auto dest = src + normal * 32.0f;
 
    // trace a line forward at maximum jump height...
    game.testLine (src, dest, TraceIgnore::Monsters, ent (), &tr);
@@ -2585,7 +2873,7 @@ bool Bot::canDuckUnder (const Vector &normal) {
    Vector baseHeight;
 
    // use center of the body first...
-   if (pev->flags & FL_DUCKING) {
+   if (isDucking ()) {
       baseHeight = pev->origin + Vector (0.0f, 0.0f, -17.0f);
    }
    else {
@@ -2724,7 +3012,7 @@ bool Bot::isDeadlyMove (const Vector &to) {
       game.testHull (check, down, TraceIgnore::Monsters, head_hull, ent (), &tr);
 
       // wall blocking?
-      if (tr.fStartSolid) { 
+      if (tr.fStartSolid) {
          return false;
       }
       float height = tr.flFraction * 1000.0f; // height from ground
@@ -2742,14 +3030,14 @@ bool Bot::isDeadlyMove (const Vector &to) {
 void Bot::changePitch (float speed) {
    // this function turns a bot towards its ideal_pitch
 
-   float idealPitch = cr::normalizeAngles (pev->idealpitch);
-   float curent = cr::normalizeAngles (pev->v_angle.x);
+   float idealPitch = cr::wrapAngle (pev->idealpitch);
+   float curent = cr::wrapAngle (pev->v_angle.x);
 
    // turn from the current v_angle pitch to the idealpitch by selecting
    // the quickest way to turn to face that direction
 
    // find the difference in the curent and ideal angle
-   float normalizePitch = cr::normalizeAngles (idealPitch - curent);
+   float normalizePitch = cr::wrapAngle (idealPitch - curent);
 
    if (normalizePitch > 0.0f) {
       if (normalizePitch > speed) {
@@ -2762,7 +3050,7 @@ void Bot::changePitch (float speed) {
       }
    }
 
-   pev->v_angle.x = cr::normalizeAngles (curent + normalizePitch);
+   pev->v_angle.x = cr::wrapAngle (curent + normalizePitch);
 
    if (pev->v_angle.x > 89.9f) {
       pev->v_angle.x = 89.9f;
@@ -2777,14 +3065,14 @@ void Bot::changePitch (float speed) {
 void Bot::changeYaw (float speed) {
    // this function turns a bot towards its ideal_yaw
 
-   float idealPitch = cr::normalizeAngles (pev->ideal_yaw);
-   float curent = cr::normalizeAngles (pev->v_angle.y);
+   float idealPitch = cr::wrapAngle (pev->ideal_yaw);
+   float curent = cr::wrapAngle (pev->v_angle.y);
 
    // turn from the current v_angle yaw to the ideal_yaw by selecting
    // the quickest way to turn to face that direction
 
    // find the difference in the curent and ideal angle
-   float normalizePitch = cr::normalizeAngles (idealPitch - curent);
+   float normalizePitch = cr::wrapAngle (idealPitch - curent);
 
    if (normalizePitch > 0.0f) {
       if (normalizePitch > speed) {
@@ -2796,20 +3084,21 @@ void Bot::changeYaw (float speed) {
          normalizePitch = -speed;
       }
    }
-   pev->v_angle.y = cr::normalizeAngles (curent + normalizePitch);
+   pev->v_angle.y = cr::wrapAngle (curent + normalizePitch);
    pev->angles.y = pev->v_angle.y;
 }
 
-int Bot::findCampingDirection () {
+int Bot::getRandomCampDir () {
    // find a good node to look at when camping
 
    if (m_currentNodeIndex == kInvalidNodeIndex) {
-      m_currentNodeIndex = changePointIndex (findNearestNode ());
+      changeNodeIndex (findNearestNode ());
    }
+   constexpr int kMaxNodesToSearch = 5;
 
-   int count = 0, indices[3] {};
-   float distTab[3] {};
-   uint16 visibility[3] {};
+   int count = 0, indices[kMaxNodesToSearch] {};
+   float distTab[kMaxNodesToSearch] {};
+   uint16_t visibility[kMaxNodesToSearch] {};
 
    int currentNode = m_currentNodeIndex;
 
@@ -2817,9 +3106,9 @@ int Bot::findCampingDirection () {
       if (currentNode == i || !graph.isVisible (currentNode, i)) {
          continue;
       }
-      const Path &path = graph[i];
+      const auto &path = graph[i];
 
-      if (count < 3) {
+      if (count < kMaxNodesToSearch) {
          indices[count] = i;
 
          distTab[count] = pev->origin.distanceSq (path.origin);
@@ -2829,9 +3118,9 @@ int Bot::findCampingDirection () {
       }
       else {
          float distance = pev->origin.distanceSq (path.origin);
-         uint16 visBits = path.vis.crouch + path.vis.stand;
+         uint16_t visBits = path.vis.crouch + path.vis.stand;
 
-         for (int j = 0; j < 3; ++j) {
+         for (int j = 0; j < kMaxNodesToSearch; ++j) {
             if (visBits >= visibility[j] && distance > distTab[j]) {
                indices[j] = i;
 
@@ -2863,13 +3152,13 @@ void Bot::updateBodyAngles () {
 }
 
 void Bot::updateLookAngles () {
-   
+
    const float delta = cr::clamp (game.time () - m_lookUpdateTime, cr::kFloatEqualEpsilon, 1.0f / 30.0f);
    m_lookUpdateTime = game.time ();
 
    // adjust all body and view angles to face an absolute vector
    Vector direction = (m_lookAt - getEyesPos ()).angles ();
-   direction.x *= -1.0f; // invert for engine
+   direction.x = -direction.x; // invert for engine
 
    direction.clampAngles ();
 
@@ -2881,18 +3170,14 @@ void Bot::updateLookAngles () {
       return;
    }
 
-   if (m_difficulty == Difficulty::Expert && (m_aimFlags & AimFlags::Enemy) && (m_wantsToFire || usesSniper ()) && cv_whose_your_daddy.bool_ ()) {
-      pev->v_angle = direction;
-      updateBodyAngles ();
-
-      return;
-   }
-
    float accelerate = 3000.0f;
    float stiffness = 200.0f;
    float damping = 25.0f;
 
-   if ((m_aimFlags & (AimFlags::Enemy | AimFlags::Entity | AimFlags::Grenade)) && m_difficulty > Difficulty::Hard) {
+   if (((m_aimFlags & (AimFlags::Enemy | AimFlags::Entity | AimFlags::Grenade)) || m_wantsToFire) && m_difficulty > Difficulty::Normal) {
+      if (m_difficulty == Difficulty::Expert) {
+         accelerate += 600.0f;
+      }
       stiffness += 100.0f;
       damping += 5.0f;
    }
@@ -2926,7 +3211,7 @@ void Bot::updateLookAnglesNewbie (const Vector &direction, float delta) {
    Vector spring { 13.0f, 13.0f, 0.0f };
    Vector damperCoefficient { 0.22f, 0.22f, 0.0f };
 
-   const float offset = cr::clamp (m_difficulty, 1, 4) * 25.0f;
+   const float offset = cr::clamp (static_cast <float> (m_difficulty), 1.0f, 4.0f) * 25.0f;
 
    Vector influence = Vector (0.25f, 0.17f, 0.0f) * (100.0f - offset) / 100.f;
    Vector randomization = Vector (2.0f, 0.18f, 0.0f) * (100.0f - offset) / 100.f;
@@ -3062,21 +3347,15 @@ bool Bot::isOccupiedNode (int index, bool needZeroVelocity) {
       }
       auto length = client.origin.distanceSq (graph[index].origin);
 
-      if (length < cr::clamp (cr::square (graph[index].radius), cr::square (60.0f), cr::square (90.0f))) {
+      if (length < cr::clamp (cr::square (graph[index].radius) * 2.0f, cr::square (80.0f), cr::square (140.0f))) {
          return true;
       }
-#if 0 // too cpu hungry, disabled temporary
       auto bot = bots[client.ent];
 
       if (bot == nullptr || bot == this || !bot->m_notKilled) {
          continue;
       }
-      auto occupyId = util.getShootingCone (bot->ent (), pev->origin) >= 0.7f ? bot->m_previousNodes[0] : bot->m_currentNodeIndex;
-
-      if (index == occupyId) {
-         return true;
-      }
-#endif
+      return index == bot->m_currentNodeIndex || bot->getTask ()->data == index;
    }
    return false;
 }
@@ -3132,10 +3411,10 @@ bool Bot::isReachableNode (int index) {
    float ladderDist = dst.distance2d (src);
 
    TraceResult tr {};
-   game.testLine (src, dst, TraceIgnore::Monsters, ent (), &tr);
+   game.testHull (src, dst, TraceIgnore::Monsters, head_hull, ent (), &tr);
 
    // if node is visible from current position (even behind head)...
-   if (tr.flFraction >= 1.0f) {
+   if (tr.flFraction >= 1.0f && !tr.fStartSolid) {
 
       // it's should be not a problem to reach node inside water...
       if (pev->waterlevel == 2 || pev->waterlevel == 3) {
@@ -3160,10 +3439,17 @@ bool Bot::isReachableNode (int index) {
 }
 
 bool Bot::isBannedNode (int index) {
-   if (graph.exists (cv_debug_goal.int_ ())) {
+   if (graph.exists (cv_debug_goal.int_ ()) || !graph.exists (index)) {
       return false;
    }
-   for (const auto &node : m_goalHistory) {
+   const auto &bucket = graph.getNodesInBucket (graph[index].origin);
+
+   // too few nodes in bucket near location, do not ban anything
+   if (bucket.length <int> () <= kMaxNodeLinks) {
+      return false;
+   }
+
+   for (const auto &node : m_nodeHistory) {
       if (node == index) {
          return true;
       }

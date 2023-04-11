@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -37,7 +37,7 @@ void BotConfig::loadMainConfig (bool isFirstLoad) {
    }
    setupMemoryFiles ();
 
-   auto needsToIgnoreVar = [](StringArray &list, const char *needle) {
+   auto needsToIgnoreVar = [] (StringArray &list, const char *needle) {
       for (const auto &var : list) {
          if (var == needle) {
             return true;
@@ -95,6 +95,9 @@ void BotConfig::loadMainConfig (bool isFirstLoad) {
       }
       file.close ();
    }
+   else {
+      game.serverCommand (strings.format ("%s cvars save", product.cmdPri));
+   }
 
    // android is abit hard to play, lower the difficulty by default
    if (plat.android && cv_difficulty.int_ () > 3) {
@@ -136,7 +139,7 @@ void BotConfig::loadNamesConfig () {
 void BotConfig::loadWeaponsConfig () {
    setupMemoryFiles ();
 
-   auto addWeaponEntries = [](SmallArray <WeaponInfo> &weapons, bool as, StringRef name, const StringArray &data) {
+   auto addWeaponEntries = [] (SmallArray <WeaponInfo> &weapons, bool as, StringRef name, const StringArray &data) {
 
       // we're have null terminator element in weapons array...
       if (data.length () + 1 != weapons.length ()) {
@@ -155,7 +158,7 @@ void BotConfig::loadWeaponsConfig () {
       }
    };
 
-   auto addIntEntries = [](SmallArray <int32> &to, StringRef name, const StringArray &data) {
+   auto addIntEntries = [] (SmallArray <int32_t> &to, StringRef name, const StringArray &data) {
       if (data.length () != to.length ()) {
          logger.error ("%s entry in weapons config is not valid or malformed (%d/%d).", name, data.length (), to.length ());
          return;
@@ -229,46 +232,46 @@ void BotConfig::loadChatterConfig () {
          int code;
          float repeat;
       } chatterEventMap[] = {
-         { "Radio_CoverMe", Radio::CoverMe, kMaxChatterRepeatInteval },
-         { "Radio_YouTakePoint", Radio::YouTakeThePoint, kMaxChatterRepeatInteval },
+         { "Radio_CoverMe", Radio::CoverMe, kMaxChatterRepeatInterval },
+         { "Radio_YouTakePoint", Radio::YouTakeThePoint, kMaxChatterRepeatInterval },
          { "Radio_HoldPosition", Radio::HoldThisPosition, 10.0f },
          { "Radio_RegroupTeam", Radio::RegroupTeam, 10.0f },
          { "Radio_FollowMe", Radio::FollowMe, 15.0f },
          { "Radio_TakingFire", Radio::TakingFireNeedAssistance, 5.0f },
-         { "Radio_GoGoGo", Radio::GoGoGo, kMaxChatterRepeatInteval },
-         { "Radio_Fallback", Radio::TeamFallback, kMaxChatterRepeatInteval },
-         { "Radio_StickTogether", Radio::StickTogetherTeam, kMaxChatterRepeatInteval },
-         { "Radio_GetInPosition", Radio::GetInPositionAndWaitForGo, kMaxChatterRepeatInteval },
-         { "Radio_StormTheFront", Radio::StormTheFront, kMaxChatterRepeatInteval },
-         { "Radio_ReportTeam", Radio::ReportInTeam, kMaxChatterRepeatInteval },
-         { "Radio_Affirmative", Radio::RogerThat, kMaxChatterRepeatInteval },
+         { "Radio_GoGoGo", Radio::GoGoGo, kMaxChatterRepeatInterval },
+         { "Radio_Fallback", Radio::TeamFallback, kMaxChatterRepeatInterval },
+         { "Radio_StickTogether", Radio::StickTogetherTeam, kMaxChatterRepeatInterval },
+         { "Radio_GetInPosition", Radio::GetInPositionAndWaitForGo, kMaxChatterRepeatInterval },
+         { "Radio_StormTheFront", Radio::StormTheFront, kMaxChatterRepeatInterval },
+         { "Radio_ReportTeam", Radio::ReportInTeam, kMaxChatterRepeatInterval },
+         { "Radio_Affirmative", Radio::RogerThat, kMaxChatterRepeatInterval },
          { "Radio_EnemySpotted", Radio::EnemySpotted, 4.0f },
          { "Radio_NeedBackup", Radio::NeedBackup, 5.0f },
          { "Radio_SectorClear", Radio::SectorClear, 10.0f },
          { "Radio_InPosition", Radio::ImInPosition, 10.0f },
          { "Radio_ReportingIn", Radio::ReportingIn, 3.0f },
-         { "Radio_ShesGonnaBlow", Radio::ShesGonnaBlow, kMaxChatterRepeatInteval },
-         { "Radio_Negative", Radio::Negative, kMaxChatterRepeatInteval },
+         { "Radio_ShesGonnaBlow", Radio::ShesGonnaBlow, kMaxChatterRepeatInterval },
+         { "Radio_Negative", Radio::Negative, kMaxChatterRepeatInterval },
          { "Radio_EnemyDown", Radio::EnemyDown, 10.0f },
-         { "Chatter_DiePain", Chatter::DiePain, kMaxChatterRepeatInteval },
+         { "Chatter_DiePain", Chatter::DiePain, kMaxChatterRepeatInterval },
          { "Chatter_GoingToPlantBomb", Chatter::GoingToPlantBomb, 5.0f },
-         { "Chatter_GoingToGuardVIPSafety", Chatter::GoingToGuardVIPSafety, kMaxChatterRepeatInteval },
-         { "Chatter_RescuingHostages", Chatter::RescuingHostages, kMaxChatterRepeatInteval },
-         { "Chatter_TeamKill", Chatter::FriendlyFire, kMaxChatterRepeatInteval },
-         { "Chatter_GuardingVipSafety", Chatter::GuardingVIPSafety, kMaxChatterRepeatInteval },
+         { "Chatter_GoingToGuardVIPSafety", Chatter::GoingToGuardVIPSafety, kMaxChatterRepeatInterval },
+         { "Chatter_RescuingHostages", Chatter::RescuingHostages, kMaxChatterRepeatInterval },
+         { "Chatter_TeamKill", Chatter::TeamKill, kMaxChatterRepeatInterval },
+         { "Chatter_GuardingVipSafety", Chatter::GuardingVIPSafety, kMaxChatterRepeatInterval },
          { "Chatter_PlantingC4", Chatter::PlantingBomb, 10.0f },
-         { "Chatter_InCombat", Chatter::InCombat,  kMaxChatterRepeatInteval },
-         { "Chatter_SeeksEnemy", Chatter::SeekingEnemies, kMaxChatterRepeatInteval },
-         { "Chatter_Nothing", Chatter::Nothing,  kMaxChatterRepeatInteval },
+         { "Chatter_InCombat", Chatter::InCombat,  kMaxChatterRepeatInterval },
+         { "Chatter_SeeksEnemy", Chatter::SeekingEnemies, kMaxChatterRepeatInterval },
+         { "Chatter_Nothing", Chatter::Nothing,  kMaxChatterRepeatInterval },
          { "Chatter_EnemyDown", Chatter::EnemyDown, 10.0f },
-         { "Chatter_UseHostage", Chatter::UsingHostages, kMaxChatterRepeatInteval },
-         { "Chatter_WonTheRound", Chatter::WonTheRound, kMaxChatterRepeatInteval },
-         { "Chatter_QuicklyWonTheRound", Chatter::QuickWonRound, kMaxChatterRepeatInteval },
-         { "Chatter_NoEnemiesLeft", Chatter::NoEnemiesLeft, kMaxChatterRepeatInteval },
+         { "Chatter_UseHostage", Chatter::UsingHostages, kMaxChatterRepeatInterval },
+         { "Chatter_WonTheRound", Chatter::WonTheRound, kMaxChatterRepeatInterval },
+         { "Chatter_QuicklyWonTheRound", Chatter::QuickWonRound, kMaxChatterRepeatInterval },
+         { "Chatter_NoEnemiesLeft", Chatter::NoEnemiesLeft, kMaxChatterRepeatInterval },
          { "Chatter_FoundBombPlace", Chatter::FoundC4Plant, 15.0f },
-         { "Chatter_WhereIsTheBomb", Chatter::WhereIsTheC4, kMaxChatterRepeatInteval },
-         { "Chatter_DefendingBombSite", Chatter::DefendingBombsite, kMaxChatterRepeatInteval },
-         { "Chatter_BarelyDefused", Chatter::BarelyDefused, kMaxChatterRepeatInteval },
+         { "Chatter_WhereIsTheBomb", Chatter::WhereIsTheC4, kMaxChatterRepeatInterval },
+         { "Chatter_DefendingBombSite", Chatter::DefendingBombsite, kMaxChatterRepeatInterval },
+         { "Chatter_BarelyDefused", Chatter::BarelyDefused, kMaxChatterRepeatInterval },
          { "Chatter_NiceshotCommander", Chatter::NiceShotCommander, 10.0f },
          { "Chatter_ReportingIn", Chatter::ReportingIn, 10.0f },
          { "Chatter_SpotTheBomber", Chatter::SpotTheBomber, 4.3f },
@@ -331,9 +334,9 @@ void BotConfig::loadChatterConfig () {
             for (const auto &event : chatterEventMap) {
                if (event.str == items[0]) {
                   // this does common work of parsing comma-separated chatter line
-                  auto sounds = items[1].split (",");
+                  auto sentences = items[1].split (",");
 
-                  for (auto &sound : sounds) {
+                  for (auto &sound : sentences) {
                      sound.trim ().trim ("\"");
                      auto duration = game.getWaveLen (sound.chars ());
 
@@ -341,7 +344,7 @@ void BotConfig::loadChatterConfig () {
                         m_chatter[event.code].emplace (cr::move (sound), event.repeat, duration);
                      }
                   }
-                  sounds.clear ();
+                  sentences.clear ();
                }
             }
          }
@@ -550,10 +553,10 @@ void BotConfig::loadDifficultyConfig () {
    };
 
    // currently, mindelay, maxdelay, headprob, seenthruprob, heardthruprob
-   constexpr uint32 kMaxDifficultyValues = 5;
+   constexpr uint32_t kMaxDifficultyValues = 5;
 
    // helper for parsing each level
-   auto parseLevel = [&] (int32 level, StringRef data) {
+   auto parseLevel = [&] (int32_t level, StringRef data) {
       auto values = data.split <String> (",");
 
       if (values.length () != kMaxDifficultyValues) {
@@ -711,6 +714,15 @@ void BotConfig::clearUsedName (Bot *bot) {
    }
 }
 
+void BotConfig::setBotNameUsed (const int index, StringRef name) {
+   for (auto &bn : m_botNames) {
+      if (bn.name == name) {
+         bn.usedBy = index;
+         break;
+      }
+   }
+}
+
 void BotConfig::initWeapons () {
    m_weapons.clear ();
 
@@ -784,14 +796,14 @@ const char *BotConfig::translate (StringRef input) {
 }
 
 void BotConfig::showCustomValues () {
-   game.print ("Current values for custom config items:");
+   ctrl.msg ("Current values for custom config items:");
 
-   m_custom.foreach ([&](const String &key, const String &val) {
-      game.print ("  %s = %s", key, val);
+   m_custom.foreach ([&] (const String &key, const String &val) {
+      ctrl.msg ("  %s = %s", key, val);
    });
 }
 
-uint32 BotConfig::hashLangString (StringRef str) {
+uint32_t BotConfig::hashLangString (StringRef str) {
    auto test = [] (const char ch) {
       return  (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
    };

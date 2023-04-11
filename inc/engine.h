@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -75,14 +75,14 @@ struct ConVarReg {
    float initial, min, max;
    bool missing;
    bool bounded;
-   int32 type;
+   int32_t type;
 };
 
 // entity prototype
 using EntityFunction = void (*) (entvars_t *);
 
 // rehlds has this fixed, but original hlds doesn't allocate string space  passed to precache* argument, so game will crash when unloading module using metamod
-class EngineWrap final : public DenyCopying {
+class EngineWrap final {
 public:
    EngineWrap () = default;
    ~EngineWrap () = default;
@@ -93,11 +93,11 @@ private:
    }
 
 public:
-   int32 precacheModel (const char *model) const {
+   int32_t precacheModel (const char *model) const {
       return engfuncs.pfnPrecacheModel (allocStr (model));
    }
 
-   int32 precacheSound (const char *sound) const {
+   int32_t precacheSound (const char *sound) const {
       return engfuncs.pfnPrecacheSound (allocStr (sound));
    }
 
@@ -112,27 +112,27 @@ public:
    using EntitySearch = Lambda <EntitySearchResult (edict_t *)>;
 
 private:
-   int m_drawModels[DrawLine::Count] { };
-   int m_spawnCount[Team::Unassigned] { };
+   int m_drawModels[DrawLine::Count] {};
+   int m_spawnCount[Team::Unassigned] {};
 
    // bot client command
-   StringArray m_botArgs;
+   StringArray m_botArgs {};
 
-   edict_t *m_startEntity;
-   edict_t *m_localEntity;
+   edict_t *m_startEntity {};
+   edict_t *m_localEntity {};
 
-   Array <edict_t *> m_breakables;
-   SmallArray <ConVarReg> m_cvars;
-   SharedLibrary m_gameLib;
-   EngineWrap m_engineWrap;
+   Array <edict_t *> m_breakables {};
+   SmallArray <ConVarReg> m_cvars {};
+   SharedLibrary m_gameLib {};
+   EngineWrap m_engineWrap {};
 
-   bool m_precached;
+   bool m_precached {};
 
    int m_gameFlags {};
    int m_mapFlags {};
 
-   float m_oneSecondFrame; // per second updated
-   float m_halfSecondFrame; // per half second update
+   float m_oneSecondFrame {}; // per second updated
+   float m_halfSecondFrame {}; // per half second update
 
 public:
    Game ();
@@ -182,7 +182,7 @@ public:
    void prepareBotArgs (edict_t *ent, String str);
 
    // adds cvar to registration stack
-   void addNewCvar (const char *name, const char *value, const char *info, bool bounded, float min, float max, int32 varType, bool missingAction, const char *regval, class ConVar *self);
+   void addNewCvar (const char *name, const char *value, const char *info, bool bounded, float min, float max, int32_t varType, bool missingAction, const char *regval, class ConVar *self);
 
    // check the cvar bounds
    void checkCvarsBounds ();
@@ -240,16 +240,16 @@ public:
    }
 
    // gets custom engine argv for client command
-   const char *botArgv (size_t index) const {
-      if (index >= m_botArgs.length ()) {
+   const char *botArgv (int32_t index) const {
+      if (static_cast <size_t> (index) >= m_botArgs.length ()) {
          return "";
       }
       return m_botArgs[index].chars ();
    }
 
    // gets custom engine argc for client command
-   int32 botArgc () const {
-      return m_botArgs.length <int32> ();
+   int32_t botArgc () const {
+      return m_botArgs.length <int32_t> ();
    }
 
    // gets edict pointer out of entity index
@@ -314,10 +314,10 @@ public:
    void setPlayerStartDrawModels ();
 
    // check the engine visibility wrapper
-   bool checkVisibility (edict_t *ent, uint8 *set);
+   bool checkVisibility (edict_t *ent, uint8_t *set);
 
    // get pvs/pas visibility set
-   uint8 *getVisibilitySet (Bot *bot, bool pvs);
+   uint8_t *getVisibilitySet (Bot *bot, bool pvs);
 
    // what kind of game engine / game dll / mod / tool we're running ?
    bool is (const int type) const {
@@ -409,11 +409,11 @@ public:
    ~ConVar () = default;
 
 public:
-   ConVar (const char *name, const char *initval, int32 type = Var::NoServer, bool regMissing = false, const char *regVal = nullptr) : ptr (nullptr) {
+   ConVar (const char *name, const char *initval, int32_t type = Var::NoServer, bool regMissing = false, const char *regVal = nullptr) : ptr (nullptr) {
       Game::instance ().addNewCvar (name, initval, "", false, 0.0f, 0.0f, type, regMissing, regVal, this);
    }
 
-   ConVar (const char *name, const char *initval, const char *info, bool bounded = true, float min = 0.0f, float max = 1.0f, int32 type = Var::NoServer, bool regMissing = false, const char *regVal = nullptr) : ptr (nullptr) {
+   ConVar (const char *name, const char *initval, const char *info, bool bounded = true, float min = 0.0f, float max = 1.0f, int32_t type = Var::NoServer, bool regMissing = false, const char *regVal = nullptr) : ptr (nullptr) {
       Game::instance ().addNewCvar (name, initval, info, bounded, min, max, type, regMissing, regVal, this);
    }
 
@@ -505,8 +505,8 @@ public:
    }
 
 public:
-   static inline uint16 fu16 (float value, float scale) {
-      return cr::clamp <uint16> (static_cast <uint16> (value * cr::bit (static_cast <short> (scale))), 0, USHRT_MAX);
+   static inline uint16_t fu16 (float value, float scale) {
+      return cr::clamp <uint16_t> (static_cast <uint16_t> (value * cr::bit (static_cast <short> (scale))), 0, USHRT_MAX);
    }
 
    static inline short fs16 (float value, float scale) {
@@ -517,7 +517,7 @@ public:
 class LightMeasure final : public Singleton <LightMeasure> {
 private:
    lightstyle_t m_lightstyle[MAX_LIGHTSTYLES] {};
-   int m_lightstyleValue[MAX_LIGHTSTYLEVALUE] {};
+   uint32_t m_lightstyleValue[MAX_LIGHTSTYLEVALUE] {};
    bool m_doAnimation = false;
 
    Color m_point;
@@ -563,11 +563,11 @@ public:
 
 // simple handler for parsing and rewriting queries (fake queries)
 class QueryBuffer {
-   SmallArray <uint8> m_buffer;
-   size_t m_cursor;
+   SmallArray <uint8_t> m_buffer {};
+   size_t m_cursor {};
 
 public:
-   QueryBuffer (const uint8 *msg, size_t length, size_t shift) : m_cursor (0) {
+   QueryBuffer (const uint8_t *msg, size_t length, size_t shift) : m_cursor (0) {
       m_buffer.insert (0, msg, length);
       m_cursor += shift;
    }
@@ -630,7 +630,7 @@ public:
    }
 
 public:
-   Twin <const uint8 *, size_t> data () {
+   Twin <const uint8_t *, size_t> data () {
       return { m_buffer.data (), m_buffer.length () };
    }
 };
@@ -640,7 +640,7 @@ private:
 #if defined (CR_WINDOWS)
 #  define DLSYM_FUNCTION GetProcAddress
 #  define DLCLOSE_FUNCTION FreeLibrary
-#  define DLSYM_RETURN FARPROC
+#  define DLSYM_RETURN SharedLibrary::Handle
 #  define DLSYM_HANDLE HMODULE
 #else
 #  define DLSYM_FUNCTION dlsym
@@ -654,7 +654,7 @@ private:
 
    Detour <decltype (DLSYM_FUNCTION)> m_dlsym;
    Detour <decltype (DLCLOSE_FUNCTION)> m_dlclose;
-   HashMap <StringRef, DLSYM_RETURN> m_exports;
+   HashMap <StringRef, SharedLibrary::Func> m_exports;
 
    SharedLibrary m_self;
 
@@ -663,7 +663,7 @@ public:
 
 public:
    void initialize ();
-   DLSYM_RETURN lookup (SharedLibrary::Handle module, const char *function);
+   SharedLibrary::Func lookup (SharedLibrary::Handle module, const char *function);
 
    int close (DLSYM_HANDLE module) {
       if (m_self.handle () == module) {
@@ -701,7 +701,7 @@ public:
    }
 
 public:
-   static DLSYM_RETURN CR_STDCALL lookupHandler (SharedLibrary::Handle module, const char *function) {
+   static SharedLibrary::Func CR_STDCALL lookupHandler (SharedLibrary::Handle module, const char *function) {
       return EntityLinkage::instance ().lookup (module, function);
    }
 

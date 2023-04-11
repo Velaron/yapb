@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -14,7 +14,7 @@ struct BotName {
 
 public:
    BotName () = default;
-   BotName (StringRef name, int usedBy) : name (name), usedBy (usedBy) { }
+   BotName (StringRef name, int usedBy) : name (name), usedBy (usedBy) {}
 };
 
 // voice config structure definition
@@ -24,7 +24,7 @@ struct ChatterItem {
    float duration;
 
 public:
-   ChatterItem (StringRef name, float repeat, float duration) : name (name), repeat (repeat), duration (duration) { }
+   ChatterItem (StringRef name, float repeat, float duration) : name (name), repeat (repeat), duration (duration) {}
 };
 
 // mostly config stuff, and some stuff dealing with menus
@@ -32,33 +32,33 @@ class BotConfig final : public Singleton <BotConfig> {
 public:
    struct DifficultyData {
       float reaction[2] {};
-      int32 headshotPct {};
-      int32 seenThruPct {};
-      int32 hearThruPct {};
+      int32_t headshotPct {};
+      int32_t seenThruPct {};
+      int32_t hearThruPct {};
    };
 
 private:
-   Array <StringArray> m_chat;
-   Array <Array <ChatterItem>> m_chatter;
+   Array <StringArray> m_chat {};
+   Array <Array <ChatterItem>> m_chatter {};
 
-   Array <BotName> m_botNames;
-   Array <Keywords> m_replies;
-   SmallArray <WeaponInfo> m_weapons;
-   SmallArray <WeaponProp> m_weaponProps;
+   Array <BotName> m_botNames {};
+   Array <Keywords> m_replies {};
+   SmallArray <WeaponInfo> m_weapons {};
+   SmallArray <WeaponProp> m_weaponProps {};
 
-   StringArray m_logos;
-   StringArray m_avatars;
+   StringArray m_logos {};
+   StringArray m_avatars {};
 
-   HashMap <uint32, String, Hash <int32>> m_language;
-   HashMap <int32, DifficultyData> m_difficulty;
-   HashMap <String, String> m_custom;
+   HashMap <uint32_t, String, Hash <int32_t>> m_language {};
+   HashMap <int32_t, DifficultyData> m_difficulty {};
+   HashMap <String, String> m_custom {};
 
    // default tables for personality weapon preferences, overridden by weapon.cfg
-   SmallArray <int32> m_normalWeaponPrefs = { 0, 2, 1, 4, 5, 6, 3, 12, 10, 24, 25, 13, 11, 8, 7, 22, 23, 18, 21, 17, 19, 15, 17, 9, 14, 16 };
-   SmallArray <int32> m_rusherWeaponPrefs = { 0, 2, 1, 4, 5, 6, 3, 24, 19, 22, 23, 20, 21, 10, 12, 13, 7, 8, 11, 9, 18, 17, 19, 25, 15, 16 };
-   SmallArray <int32> m_carefulWeaponPrefs = { 0, 2, 1, 4, 25, 6, 3, 7, 8, 12, 10, 13, 11, 9, 24, 18, 14, 17, 16, 15, 19, 20, 21, 22, 23, 5 };
-   SmallArray <int32> m_botBuyEconomyTable = { 1900, 2100, 2100, 4000, 6000, 7000, 16000, 1200, 800, 1000, 3000 };
-   SmallArray <int32> m_grenadeBuyPrecent = { 95, 85, 60 };
+   SmallArray <int32_t> m_normalWeaponPrefs = { 0, 2, 1, 4, 5, 6, 3, 12, 10, 24, 25, 13, 11, 8, 7, 22, 23, 18, 21, 17, 19, 15, 17, 9, 14, 16 };
+   SmallArray <int32_t> m_rusherWeaponPrefs = { 0, 2, 1, 4, 5, 6, 3, 24, 19, 22, 23, 20, 21, 10, 12, 13, 7, 8, 11, 9, 18, 17, 19, 25, 15, 16 };
+   SmallArray <int32_t> m_carefulWeaponPrefs = { 0, 2, 1, 4, 25, 6, 3, 7, 8, 12, 10, 13, 11, 9, 24, 18, 14, 17, 16, 15, 19, 20, 21, 22, 23, 5 };
+   SmallArray <int32_t> m_botBuyEconomyTable = { 1900, 2100, 2100, 4000, 6000, 7000, 16000, 1200, 800, 1000, 3000 };
+   SmallArray <int32_t> m_grenadeBuyPrecent = { 95, 85, 60 };
 
 public:
    BotConfig ();
@@ -111,6 +111,9 @@ public:
    // remove bot name from used list
    void clearUsedName (Bot *bot);
 
+   // set the bot names as used
+   void setBotNameUsed (const int index, StringRef name);
+
    // initialize weapon info
    void initWeapons ();
 
@@ -135,7 +138,7 @@ private:
    };
 
    // hash the lang string, only the letters
-   uint32 hashLangString (StringRef str);
+   uint32_t hashLangString (StringRef str);
 
 public:
 
@@ -185,7 +188,7 @@ public:
    }
 
    // get's weapons type by id
-   int32 getWeaponType (int id) const {
+   int32_t getWeaponType (int id) const {
       for (const auto &weapon : m_weapons) {
          if (weapon.id == id) {
             return weapon.type;
@@ -195,7 +198,7 @@ public:
    }
 
    // get's weapon preferences for personality
-   int32 *getWeaponPrefs (int personality) const {
+   int32_t *getWeaponPrefs (int personality) const {
       switch (personality) {
       case Personality::Normal:
       default:
@@ -210,7 +213,7 @@ public:
    }
 
    // get's the difficulty level tweaks
-   DifficultyData *getDifficultyTweaks (int32 level) {
+   DifficultyData *getDifficultyTweaks (int32_t level) {
       if (level < Difficulty::Noob || level > Difficulty::Expert) {
          return &m_difficulty[Difficulty::Expert];
       }
@@ -218,7 +221,7 @@ public:
    }
 
    // get economics value
-   int32 *getEconLimit () {
+   int32_t *getEconLimit () {
       return m_botBuyEconomyTable.data ();
    }
 
@@ -236,8 +239,8 @@ public:
    }
 
    // get's random logo index
-   int32 getRandomLogoIndex () const {
-      return static_cast <int32> (m_logos.index (m_logos.random ()));
+   int32_t getRandomLogoIndex () const {
+      return static_cast <int32_t> (m_logos.index (m_logos.random ()));
    }
 
    // get random name by index

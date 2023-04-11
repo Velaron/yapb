@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -46,6 +46,7 @@ CR_DECLARE_SCOPED_ENUM (Task,
    Hide,
    Blind,
    Spraypaint,
+   Max
 )
 
 // bot menu ids
@@ -60,6 +61,8 @@ CR_DECLARE_SCOPED_ENUM (Menu,
    TeamSelect,
    TerroristSelect,
    CTSelect,
+   TerroristSelectCZ,
+   CTSelectCZ,
    Commands,
    NodeMainPage1,
    NodeMainPage2,
@@ -68,6 +71,8 @@ CR_DECLARE_SCOPED_ENUM (Menu,
    NodeFlag,
    NodeAutoPath,
    NodePath,
+   NodeDebug,
+   CampDirections,
    KickPage1,
    KickPage2,
    KickPage3,
@@ -188,6 +193,7 @@ CR_DECLARE_SCOPED_ENUM (Chatter,
    GoingToCamp,
    HeardNoise,
    TeamAttack,
+   TeamKill,
    ReportingIn,
    GuardingDroppedC4,
    Camping,
@@ -344,7 +350,7 @@ CR_DECLARE_SCOPED_ENUM (Reload,
 )
 
 // collision probes
-CR_DECLARE_SCOPED_ENUM (CollisionProbe,
+CR_DECLARE_SCOPED_ENUM (CollisionProbe, uint32_t,
    Jump = cr::bit (0), // probe jump when colliding
    Duck = cr::bit (1), // probe duck when colliding
    Strafe = cr::bit (2) // probe strafing when colliding
@@ -362,7 +368,7 @@ CR_DECLARE_SCOPED_ENUM (BotMsg,
 )
 
 // sensing states
-CR_DECLARE_SCOPED_ENUM (Sense,
+CR_DECLARE_SCOPED_ENUM_TYPE (Sense, uint32_t,
    SeeingEnemy = cr::bit (0), // seeing an enemy
    HearingEnemy = cr::bit (1), // hearing an enemy
    SuspectEnemy = cr::bit (2), // suspect enemy behind obstacle
@@ -373,7 +379,7 @@ CR_DECLARE_SCOPED_ENUM (Sense,
 )
 
 // positions to aim at
-CR_DECLARE_SCOPED_ENUM (AimFlags,
+CR_DECLARE_SCOPED_ENUM_TYPE (AimFlags, uint32_t,
    Nav = cr::bit (0), // aim at nav point
    Camp = cr::bit (1), // aim at camp vector
    PredictPath = cr::bit (2), // aim at predicted path
@@ -440,14 +446,14 @@ namespace TaskPri {
 // storage file magic
 constexpr char kPodbotMagic[8] = "PODWAY!";
 
-constexpr int32 kStorageMagic = 0x59415042; // storage magic for yapb-data files
-constexpr int32 kStorageMagicUB = 0x544f4255; //support also the fork format (merged back into yapb)
+constexpr int32_t kStorageMagic = 0x59415042; // storage magic for yapb-data files
+constexpr int32_t kStorageMagicUB = 0x544f4255; //support also the fork format (merged back into yapb)
 
 constexpr float kInfiniteDistance = 9999999.0f;
-constexpr float kGrenadeCheckTime = 2.15f;
+constexpr float kGrenadeCheckTime = 0.6f;
 constexpr float kSprayDistance = 260.0f;
 constexpr float kDoubleSprayDistance = kSprayDistance * 2;
-constexpr float kMaxChatterRepeatInteval = 99.0f;
+constexpr float kMaxChatterRepeatInterval = 99.0f;
 
 constexpr int kInfiniteDistanceLong = static_cast <int> (kInfiniteDistance);
 constexpr int kMaxNodeLinks = 8;
@@ -585,12 +591,12 @@ struct Client {
 
 // define chatting collection structure
 struct ChatCollection {
-   int chatProbability;
-   float chatDelay;
-   float timeNextChat;
-   int entityIndex;
-   String sayText;
-   StringArray lastUsedSentences;
+   int chatProbability {};
+   float chatDelay {};
+   float timeNextChat {};
+   int entityIndex {};
+   String sayText {};
+   StringArray lastUsedSentences {};
 };
 
 // include bot graph stuff
@@ -605,19 +611,19 @@ public:
    friend class BotManager;
 
 private:
-   uint32 m_states {}; // sensing bitstates
-   uint32 m_collideMoves[kMaxCollideMoves] {}; // sorted array of movements
-   uint32 m_collisionProbeBits {}; // bits of possible collision moves
-   uint32 m_collStateIndex {}; // index into collide moves
-   uint32 m_aimFlags {}; // aiming conditions
-   uint32 m_currentTravelFlags {}; // connection flags like jumping
+   uint32_t m_states {}; // sensing bitstates
+   uint32_t m_collideMoves[kMaxCollideMoves] {}; // sorted array of movements
+   uint32_t m_collisionProbeBits {}; // bits of possible collision moves
+   uint32_t m_collStateIndex {}; // index into collide moves
+   uint32_t m_aimFlags {}; // aiming conditions
+   uint32_t m_currentTravelFlags {}; // connection flags like jumping
 
    int m_traceSkip[TraceChannel::Num] {}; // trace need to be skipped?
    int m_messageQueue[32] {}; // stack for messages
 
    int m_oldButtons {}; // our old buttons
    int m_reloadState {}; // current reload state
-   int m_voicePitch; // bot voice pitch
+   int m_voicePitch {}; // bot voice pitch
    int m_loosedBombNodeIndex {}; // nearest to loosed bomb node
    int m_plantedBombNodeIndex {}; // nearest to planted bomb node
    int m_currentNodeIndex {}; // current node index
@@ -630,18 +636,18 @@ private:
    int m_tryOpenDoor {}; // attempt's to open the door
    int m_liftState {}; // state of lift handling
    int m_radioSelect {}; // radio entry
-   
+  
    float m_headedTime {};
    float m_prevTime {}; // time previously checked movement speed
-   float m_heavyTimestamp; // is it time to execute heavy-weight functions
+   float m_heavyTimestamp {}; // is it time to execute heavy-weight functions
    float m_prevSpeed {}; // speed some frames before
    float m_timeDoorOpen {}; // time to next door open check
    float m_lastChatTime {}; // time bot last chatted
    float m_timeLogoSpray {}; // time bot last spray logo
    float m_knifeAttackTime {}; // time to rush with knife (at the beginning of the round)
    float m_duckDefuseCheckTime {}; // time to check for ducking for defuse
-   float m_frameInterval; // bot's frame interval
-   float m_lastCommandTime; // time bot last thinked
+   float m_frameInterval {}; // bot's frame interval
+   float m_lastCommandTime {}; // time bot last thinked
    float m_reloadCheckTime {}; // time to check reloading
    float m_zoomCheckTime {}; // time to check zoom again
    float m_shieldCheckTime {}; // time to check shiled drawing again
@@ -679,15 +685,16 @@ private:
    float m_minSpeed {}; // minimum speed in normal mode
    float m_oldCombatDesire {}; // holds old desire for filtering
    float m_itemCheckTime {}; // time next search for items needs to be done
-   float m_joinServerTime; // time when bot joined the game
-   float m_playServerTime; // time bot spent in the game
+   float m_joinServerTime {}; // time when bot joined the game
+   float m_playServerTime {}; // time bot spent in the game
    float m_changeViewTime {}; // timestamp to change look at while at freezetime
    float m_breakableTime {}; // breakeble acquired time
+   float m_jumpDistance {}; // last jump distance
 
    bool m_moveToGoal {}; // bot currently moving to goal??
    bool m_isStuck {}; // bot is stuck
    bool m_isReloading {}; // bot is reloading a gun
-   bool m_forceRadio; // should bot use radio anyway?
+   bool m_forceRadio {}; // should bot use radio anyway?
    bool m_defendedBomb {}; // defend action issued
    bool m_defendHostage {}; // defend action issued
    bool m_duckDefuse {}; // should or not bot duck to defuse bomb
@@ -701,15 +708,16 @@ private:
    bool m_checkTerrain {}; // check for terrain
    bool m_moveToC4 {}; // ct is moving to bomb
    bool m_grenadeRequested {}; // bot requested change to grenade
+   bool m_needToSendWelcomeChat {}; // bot needs to greet people on server?
 
-   Pickup m_pickupType; // type of entity which needs to be used/picked up
-   PathWalk m_pathWalk; // pointer to current node from path
-   Dodge m_combatStrafeDir; // direction to strafe
-   Fight m_fightStyle; // combat style to use
-   CollisionState m_collisionState; // collision State
-   FindPath m_pathType; // which pathfinder to use
-   uint8 m_enemyParts {}; // visibility flags
-   TraceResult m_lastTrace[TraceChannel::Num]; // last trace result
+   Pickup m_pickupType {}; // type of entity which needs to be used/picked up
+   PathWalk m_pathWalk {}; // pointer to current node from path
+   Dodge m_combatStrafeDir {}; // direction to strafe
+   Fight m_fightStyle {}; // combat style to use
+   CollisionState m_collisionState {}; // collision State
+   FindPath m_pathType {}; // which pathfinder to use
+   uint8_t m_enemyParts {}; // visibility flags
+   TraceResult m_lastTrace[TraceChannel::Num] {}; // last trace result
 
    edict_t *m_pickupItem {}; // pointer to entity of item to use/pickup
    edict_t *m_itemIgnore {}; // pointer to entity to ignore for pickup
@@ -718,54 +726,56 @@ private:
    edict_t *m_lastBreakable {}; // last acquired breakable
    edict_t *m_targetEntity {}; // the entity that the bot is trying to reach
    edict_t *m_avoidGrenade {}; // pointer to grenade entity to avoid
+   edict_t *m_hindrance {}; // the hidrance
 
-   Vector m_liftTravelPos; // lift travel position
-   Vector m_moveAngles; // bot move angles
-   Vector m_idealAngles; // angle wanted
-   Vector m_randomizedIdealAngles; // angle wanted with noise
-   Vector m_angularDeviation; // angular deviation from current to ideal angles
-   Vector m_aimSpeed; // aim speed calculated
-   Vector m_aimLastError; // last calculated aim error
-   Vector m_prevOrigin; // origin some frames before
-   Vector m_lookAt; // vector bot should look at
-   Vector m_throw; // origin of node to throw grenades
-   Vector m_enemyOrigin; // target origin chosen for shooting
-   Vector m_grenade; // calculated vector for grenades
-   Vector m_entity; // origin of entities like buttons etc.
-   Vector m_camp; // aiming vector when camping.
-   Vector m_desiredVelocity; // desired velocity for jump nodes
-   Vector m_breakableOrigin; // origin of breakable
+   Vector m_liftTravelPos {}; // lift travel position
+   Vector m_moveAngles {}; // bot move angles
+   Vector m_idealAngles {}; // angle wanted
+   Vector m_randomizedIdealAngles {}; // angle wanted with noise
+   Vector m_angularDeviation {}; // angular deviation from current to ideal angles
+   Vector m_aimSpeed {}; // aim speed calculated
+   Vector m_aimLastError {}; // last calculated aim error
+   Vector m_prevOrigin {}; // origin some frames before
+   Vector m_lookAt {}; // vector bot should look at
+   Vector m_throw {}; // origin of node to throw grenades
+   Vector m_enemyOrigin {}; // target origin chosen for shooting
+   Vector m_grenade {}; // calculated vector for grenades
+   Vector m_entity {}; // origin of entities like buttons etc.
+   Vector m_lookAtSafe {}; // aiming vector when camping.
+   Vector m_desiredVelocity {}; // desired velocity for jump nodes
+   Vector m_breakableOrigin {}; // origin of breakable
 
-   Array <edict_t *> m_ignoredBreakable; // list of ignored breakables
-   Array <edict_t *> m_hostages; // pointer to used hostage entities
-   Array <Route> m_routes; // pointer
-   Array <int32> m_goalHistory; // history of selected goals
+   Array <edict_t *> m_ignoredBreakable {}; // list of ignored breakables
+   Array <edict_t *> m_hostages {}; // pointer to used hostage entities
+   Array <Route> m_routes {}; // pointer
+   Array <int32_t> m_nodeHistory {}; // history of selected goals
 
-   BinaryHeap <RouteTwin> m_routeQue;
+   BinaryHeap <RouteTwin> m_routeQue {};
    Path *m_path {}; // pointer to the current path node
-   String m_chatBuffer; // space for strings (say text...)
-   FrustumPlane m_frustum[FrustumSide::Num]  {};
+   String m_chatBuffer {}; // space for strings (say text...)
+   FrustumPlane m_frustum[FrustumSide::Num] {};
 
 private:
    int pickBestWeapon (int *vec, int count, int moneySave);
-   int findCampingDirection ();
-   int findAimingNode (const Vector &to);
+   int getRandomCampDir ();
+   int findAimingNode (const Vector &to, int &pathLength);
    int findNearestNode ();
    int findBombNode ();
    int findCoverNode (float maxDistance);
    int findDefendNode (const Vector &origin);
    int findBestGoal ();
+   int findBestGoalWhenBombAction ();
    int findGoalPost (int tactic, IntArray *defensive, IntArray *offsensive);
    int bestPrimaryCarried ();
    int bestSecondaryCarried ();
    int bestGrenadeCarried ();
    int bestWeaponCarried ();
-   int changePointIndex (int index);
+   int changeNodeIndex (int index);
    int numEnemiesNear (const Vector &origin, float radius);
    int numFriendsNear (const Vector &origin, float radius);
 
    float getBombTimeleft ();
-   float getReachTime ();
+   float getEstimatedNodeReachTime ();
    float isInFOV (const Vector &dest);
    float getShiftSpeed ();
    float getEnemyBodyOffsetCorrection (float distance);
@@ -789,7 +799,6 @@ private:
    bool isInViewCone (const Vector &origin);
    bool checkBodyParts (edict_t *target);
    bool seesEnemy (edict_t *player, bool ignoreFOV = false);
-   bool doPlayerAvoidance (const Vector &normal);
    bool hasActiveGoal ();
    bool advanceMovement ();
    bool isBombDefusing (const Vector &bombOrigin);
@@ -811,6 +820,7 @@ private:
    bool isGroupOfEnemies (const Vector &location, int numEnemies = 1, float radius = 256.0f);
    bool isPenetrableObstacle (const Vector &dest);
    bool isPenetrableObstacle2 (const Vector &dest);
+   bool isPenetrableObstacle3 (const Vector &dest);
    bool isEnemyBehindShield (edict_t *enemy);
    bool isEnemyInFrustum (edict_t *enemy);
    bool checkChatKeywords (String &reply);
@@ -821,6 +831,8 @@ private:
    bool updateLiftStates ();
    bool canRunHeavyWeight ();
 
+   void doPlayerAvoidance (const Vector &normal);
+   void selectCampButtons (int index);
    void markStale ();
    void instantChatter (int type);
    void update ();
@@ -844,10 +856,10 @@ private:
    void updateHearing ();
    void postprocessGoals (const IntArray &goals, int result[]);
    void updatePickups ();
+   void ensureEntitiesClear ();
    void checkTerrain (float movedDistance, const Vector &dirNormal);
    void checkDarkness ();
    void checkParachute ();
-   void getCampDirection (Vector *dest);
    void updatePracticeValue (int damage);
    void updatePracticeDamage (edict_t *attacker, int damage);
    void findShortestPath (int srcIndex, int destIndex);
@@ -873,13 +885,15 @@ private:
    void focusEnemy ();
    void selectBestWeapon ();
    void selectSecondary ();
-   void selectWeaponByName (const char *name);
-   void selectWeaponById (int num);
+   void selectWeaponById (int id);
+   void selectWeaponByIndex (int index);
 
    void completeTask ();
-   void tasks ();
+   void executeTasks ();
    void trackEnemies ();
-   void choiceFreezetimeEntity ();
+   void logicDuringFreezetime ();
+   void translateInput ();
+   void moveToGoal ();
 
    void normal_ ();
    void spraypaint_ ();
@@ -904,15 +918,16 @@ private:
 
    edict_t *lookupButton (const char *target);
    edict_t *lookupBreakable ();
-   edict_t *correctGrenadeVelocity (const char *model);
+   edict_t *setCorrectGrenadeVelocity (const char *model);
 
    const Vector &getEnemyBodyOffset ();
    Vector calcThrow (const Vector &start, const Vector &stop);
    Vector calcToss (const Vector &start, const Vector &stop);
    Vector isBombAudible ();
    Vector getBodyOffsetError (float distance);
+   Vector getCampDirection (const Vector &dest);
 
-   uint8 computeMsec ();
+   uint8_t computeMsec ();
 
 private:
    bool isOnLadder () const {
@@ -920,7 +935,7 @@ private:
    }
 
    bool isOnFloor () const {
-      return (pev->flags & (FL_ONGROUND | FL_PARTIALGROUND)) != 0;
+      return !!(pev->flags & (FL_ONGROUND | FL_PARTIALGROUND));
    }
 
    bool isInWater () const {
@@ -931,18 +946,22 @@ private:
       return (m_pathFlags & NodeFlag::Narrow);
    }
 
-public:
-   entvars_t *pev;
+   void dropCurrentWeapon () {
+      issueCommand ("drop");
+   }
 
-   int m_index; // saved bot index
-   int m_wantedTeam; // player team bot wants select
-   int m_wantedSkin; // player model bot wants to select
-   int m_difficulty; // bots hard level
-   int m_moneyAmount; // amount of money in bot's bank
+public:
+   entvars_t *pev {};
+
+   int m_index {}; // saved bot index
+   int m_wantedTeam {}; // player team bot wants select
+   int m_wantedSkin {}; // player model bot wants to select
+   int m_difficulty {}; // bots hard level
+   int m_moneyAmount {}; // amount of money in bot's bank
 
    float m_spawnTime {}; // time this bot spawned
    float m_timeTeamOrder {}; // time of last radio command
-   float m_slowFrameTimestamp; // time to per-second think
+   float m_slowFrameTimestamp {}; // time to per-second think
    float m_nextBuyTime {}; // next buy time
    float m_checkDarkTime {}; // check for darkness time
    float m_preventFlashing {}; // bot turned away from flashbang
@@ -951,11 +970,11 @@ public:
    float m_blindSidemoveSpeed {}; // mad side move speeds when bot is blind
    float m_fallDownTime {}; // time bot started to fall 
    float m_duckForJump {}; // is bot needed to duck for double jump
-   float m_baseAgressionLevel; // base aggression level (on initializing)
-   float m_baseFearLevel; // base fear level (on initializing)
-   float m_agressionLevel; // dynamic aggression level (in game)
-   float m_fearLevel; // dynamic fear level (in game)
-   float m_nextEmotionUpdate; // next time to sanitize emotions
+   float m_baseAgressionLevel {}; // base aggression level (on initializing)
+   float m_baseFearLevel {}; // base fear level (on initializing)
+   float m_agressionLevel {}; // dynamic aggression level (in game)
+   float m_fearLevel {}; // dynamic fear level (in game)
+   float m_nextEmotionUpdate {}; // next time to sanitize emotions
    float m_updateTime {}; // skip some frames in bot thinking
    float m_updateInterval {}; // interval between frames
    float m_goalValue {}; // ranking value for this node
@@ -974,19 +993,21 @@ public:
    float m_shootTime {}; // time to shoot
    float m_timeLastFired {}; // time to last firing
    float m_difficultyChange {}; // time when auto-difficulty was last applied to this bot
-   float m_kpdRatio; // kill per death ratio
-   float m_healthValue; // clamped bot health 
+   float m_kpdRatio {}; // kill per death ratio
+   float m_healthValue {}; // clamped bot health
+   float m_stayTime {}; // stay time before reconnect
 
+   int m_blindNodeIndex {}; // node index to cover when blind
    int m_flashLevel {}; // flashlight level
-   int m_basePing; // base ping for bot
+   int m_basePing {}; // base ping for bot
    int m_numEnemiesLeft {}; // number of enemies alive left on map
    int m_numFriendsLeft {}; // number of friend alive left on map
-   int m_retryJoin; // retry count for chosing team/class
-   int m_startAction; // team/class selection state
+   int m_retryJoin {}; // retry count for chosing team/class
+   int m_startAction {}; // team/class selection state
    int m_voteKickIndex {}; // index of player to vote against
    int m_lastVoteKick {}; // last index
    int m_voteMap {}; // number of map to vote for
-   int m_logotypeIndex; // index for logotype
+   int m_logotypeIndex {}; // index for logotype
    int m_buyState {}; // current count in buying
    int m_blindButton {}; // buttons bot press, when blind
    int m_radioOrder {}; // actual command
@@ -994,14 +1015,14 @@ public:
    int m_chosenGoalIndex {}; // used for experience, same as above
    int m_lastDamageType {}; // stores last damage
    int m_team {}; // bot team
-   int m_currentWeapon; // one current weapon for each bot
-   int m_weaponType; // current weapon type
+   int m_currentWeapon {}; // one current weapon for each bot
+   int m_weaponType {}; // current weapon type
    int m_ammoInClip[kMaxWeapons] {}; // ammo in clip for each weapons
    int m_ammo[MAX_AMMO_SLOTS] {}; // total ammo amounts
 
    bool m_isVIP {}; // bot is vip?
-   bool m_notKilled; // has the player been killed or has he just respawned
-   bool m_notStarted; // team/class not chosen yet
+   bool m_notKilled {}; // has the player been killed or has he just respawned
+   bool m_notStarted {}; // team/class not chosen yet
    bool m_ignoreBuyDelay {}; // when reaching buyzone in the middle of the round don't do pauses
    bool m_inBombZone {}; // bot in the bomb zone or not
    bool m_inBuyZone {}; // bot currently in buy zone
@@ -1016,6 +1037,7 @@ public:
    bool m_jumpReady {}; // is double jump ready
    bool m_canChooseAimDirection {}; // can choose aiming direction
    bool m_isEnemyReachable {}; // direct line to enemy
+   bool m_kickedByRotation {}; // is bot kicked due to rotation ?
 
    edict_t *m_doubleJumpEntity {}; // pointer to entity that request double jump
    edict_t *m_radioEntity {}; // pointer to entity issuing a radio command
@@ -1024,17 +1046,17 @@ public:
    edict_t *m_lastVictim {}; // pointer to killed entity
    edict_t *m_trackingEdict {}; // pointer to last tracked player when camping/hiding
 
-   Vector m_pathOrigin; // origin of node
-   Vector m_destOrigin; // origin of move destination
-   Vector m_position; // position to move to in move to position task
-   Vector m_doubleJumpOrigin; // origin of double jump
-   Vector m_lastEnemyOrigin; // vector to last enemy origin
+   Vector m_pathOrigin {}; // origin of node
+   Vector m_destOrigin {}; // origin of move destination
+   Vector m_position {}; // position to move to in move to position task
+   Vector m_doubleJumpOrigin {}; // origin of double jump
+   Vector m_lastEnemyOrigin {}; // vector to last enemy origin
   
-   ChatCollection m_sayTextBuffer; // holds the index & the actual message of the last unprocessed text message of a player
-   BurstMode m_weaponBurstMode; // bot using burst mode? (famas/glock18, but also silencer mode)
-   Personality m_personality; // bots type
-   Array <BotTask> m_tasks;
-   Deque <int32> m_msgQueue;
+   ChatCollection m_sayTextBuffer {}; // holds the index & the actual message of the last unprocessed text message of a player
+   BurstMode m_weaponBurstMode {}; // bot using burst mode? (famas/glock18, but also silencer mode)
+   Personality m_personality {}; // bots type
+   Array <BotTask> m_tasks {};
+   Deque <int32_t> m_msgQueue {};
 
 public:
    Bot (edict_t *bot, int difficulty, int personality, int team, int skin);
@@ -1052,7 +1074,7 @@ public:
    void pushMsgQueue (int message);
    void prepareChatMessage (StringRef message);
    void checkForChat ();
-   void showChaterIcon (bool show);
+   void showChaterIcon (bool show, bool disconnect = false);
    void clearSearchNodes ();
    void checkBreakable (edict_t *touch);
    void checkBreakablesAround ();
@@ -1087,20 +1109,24 @@ public:
    bool hasSecondaryWeapon ();
    bool hasShield ();
    bool isShieldDrawn ();
-   bool findBestNearestNode ();
+   bool findNextBestNode ();
    bool seesEntity (const Vector &dest, bool fromBody = false);
    bool canSkipNextTrace (TraceChannel channel);
 
    int getAmmo ();
+   int getAmmo (int id);
    int getNearestToPlantedBomb ();
 
-   float getFrameInterval ();
    float getConnectionTime ();
    BotTask *getTask ();
 
 public:
    int getAmmoInClip () const {
       return m_ammoInClip[m_currentWeapon];
+   }
+
+   bool isDucking () const {
+      return !!(pev->flags & FL_DUCKING);
    }
    
    Vector getCenter () const {
@@ -1144,6 +1170,9 @@ public:
       return m_lastTrace[channel];
    }
 
+   // is low on admmo on index?
+   bool isLowOnAmmo (const int index, const float factor) const;
+
    // prints debug message
    template <typename ...Args> void debugMsg (const char *fmt, Args &&...args) {
       debugMsgInternal (strings.format (fmt, cr::forward <Args> (args)...));
@@ -1155,6 +1184,7 @@ public:
 
 #include "config.h"
 #include "support.h"
+#include "sounds.h"
 #include "message.h"
 #include "engine.h"
 #include "manager.h"
@@ -1169,7 +1199,6 @@ extern ConVar cv_chat;
 extern ConVar cv_language;
 extern ConVar cv_show_latency;
 extern ConVar cv_enable_query_hook;
-extern ConVar cv_whose_your_daddy;
 extern ConVar cv_chatter_path;
 extern ConVar cv_quota;
 extern ConVar cv_difficulty;
@@ -1181,6 +1210,7 @@ extern ConVar cv_debug;
 extern ConVar cv_debug_goal;
 extern ConVar cv_save_bots_names;
 extern ConVar cv_random_knife_attacks;
+extern ConVar cv_rotate_bots;
 
 extern ConVar mp_freezetime;
 extern ConVar mp_roundtime;
@@ -1189,6 +1219,7 @@ extern ConVar mp_limitteams;
 extern ConVar mp_autoteambalance;
 extern ConVar mp_footsteps;
 extern ConVar mp_startmoney;
+extern ConVar mp_c4timer;
 
 // execute client command helper
 template <typename ...Args> void Bot::issueCommand (const char *fmt, Args &&...args) {

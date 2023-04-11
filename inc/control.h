@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -52,32 +52,32 @@ public:
 
    // queued text message to prevent overflow with rapid output
    struct PrintQueue {
-      int32 destination {};
+      int32_t destination {};
       String text;
 
    public:
      explicit PrintQueue () = default;
 
-      PrintQueue (int32 destination, StringRef text) : destination (destination), text (text) 
+      PrintQueue (int32_t destination, StringRef text) : destination (destination), text (text) 
       { }
    };
 
 private:
-   StringArray m_args;
-   Array <BotCmd> m_cmds;
-   Array <BotMenu> m_menus;
-   Deque <PrintQueue> m_printQueue;
-   IntArray m_campIterator;
+   StringArray m_args {};
+   Array <BotCmd> m_cmds {};
+   Array <BotMenu> m_menus {};
+   Deque <PrintQueue> m_printQueue {};
+   IntArray m_campIterator {};
 
-   edict_t *m_ent;
-   Bot *m_djump;
+   edict_t *m_ent {};
+   Bot *m_djump {};
 
-   bool m_isFromConsole;
-   bool m_rapidOutput;
-   bool m_isMenuFillCommand;
-   bool m_ignoreTranslate;
+   bool m_isFromConsole {};
+   bool m_rapidOutput {};
+   bool m_isMenuFillCommand {};
+   bool m_ignoreTranslate {};
 
-   int m_menuServerFillTeam;
+   int m_menuServerFillTeam {};
    int m_interMenuData[4] = { 0, };
 
    float m_printQueueFlushTimestamp {};
@@ -124,6 +124,7 @@ private:
    int cmdNodeIterateCamp ();
    int cmdNodeShowStats ();
    int cmdNodeFileInfo ();
+   int cmdAdjustHeight ();
 
 private:
    int menuMain (int item);
@@ -139,8 +140,10 @@ private:
    int menuGraphPage2 (int item);
    int menuGraphRadius (int item);
    int menuGraphType (int item);
+   int menuGraphDebug (int item);
    int menuGraphFlag (int item);
    int menuGraphPath (int item);
+   int menuCampDirections (int item);
    int menuAutoPathDistance (int item);
    int menuKickPage1 (int item);
    int menuKickPage2 (int item);
@@ -187,6 +190,13 @@ public:
       return m_args[arg].int_ ();
    }
 
+   float floatValue (size_t arg) const {
+      if (!hasArg (arg)) {
+         return 0.0f;
+      }
+      return m_args[arg].float_ ();
+   }
+
    StringRef strValue (size_t arg) {
       if (!hasArg (arg)) {
          return "";
@@ -208,6 +218,10 @@ public:
       for (int i = 0; i < engfuncs.pfnCmd_Argc (); ++i) {
          m_args.emplace (engfuncs.pfnCmd_Argv (i));
       }
+   }
+
+   edict_t *getIssuer() {
+      return m_ent;
    }
 
    // global heloer for sending message to correct channel

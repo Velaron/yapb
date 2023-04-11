@@ -1,6 +1,6 @@
 //
 // YaPB - Counter-Strike Bot based on PODBot by Markus Klinge.
-// Copyright © 2004-2022 YaPB Project <yapb@jeefo.net>.
+// Copyright © 2004-2023 YaPB Project <yapb@jeefo.net>.
 //
 // SPDX-License-Identifier: MIT
 //
@@ -25,7 +25,7 @@ private:
 
 public:
    float MaxView = 4096.0f;
-   float MinView = 5.0f;
+   float MinView = 2.0f;
 
 public:
    float farHeight; // height of the far frustum
@@ -54,13 +54,13 @@ public:
    using UniqueBot = UniquePtr <Bot>;
 
 private:
-   float m_timeRoundStart;
-   float m_timeRoundEnd;
-   float m_timeRoundMid;
+   float m_timeRoundStart {};
+   float m_timeRoundEnd {};
+   float m_timeRoundMid {};
 
-   float m_autoKillCheckTime; // time to kill all the bots ?
-   float m_maintainTime; // time to maintain bot creation
-   float m_quotaMaintainTime; // time to maintain bot quota
+   float m_autoKillCheckTime {}; // time to kill all the bots ?
+   float m_maintainTime {}; // time to maintain bot creation
+   float m_quotaMaintainTime {}; // time to maintain bot quota
    float m_grenadeUpdateTime {}; // time to update active grenades
    float m_entityUpdateTime {}; // time to update intresting entities
    float m_plantSearchUpdateTime {}; // time to update for searching planted bomb
@@ -68,26 +68,26 @@ private:
    float m_timeBombPlanted {}; // time the bomb were planted
    float m_lastRadioTime[kGameTeamNum] {}; // global radio time
 
-   int m_lastWinner; // the team who won previous round
-   int m_lastDifficulty; // last bots difficulty
-   int m_bombSayStatus; // some bot is issued whine about bomb
+   int m_lastWinner {}; // the team who won previous round
+   int m_lastDifficulty {}; // last bots difficulty
+   int m_bombSayStatus {}; // some bot is issued whine about bomb
    int m_lastRadio[kGameTeamNum] {}; // last radio message for team
 
    bool m_leaderChoosen[kGameTeamNum] {}; // is team leader choose theese round
    bool m_economicsGood[kGameTeamNum] {}; // is team able to buy anything
-   bool m_bombPlanted;
-   bool m_botsCanPause;
-   bool m_roundOver;
+   bool m_bombPlanted {};
+   bool m_botsCanPause {};
+   bool m_roundOver {};
 
-   Array <edict_t *> m_activeGrenades; // holds currently active grenades on the map
-   Array <edict_t *> m_intrestingEntities;  // holds currently intresting entities on the map
+   Array <edict_t *> m_activeGrenades {}; // holds currently active grenades on the map
+   Array <edict_t *> m_intrestingEntities {};  // holds currently intresting entities on the map
 
-   Deque <String> m_saveBotNames; // bots names that persist upon changelevel
-   Deque <BotRequest> m_addRequests; // bot creation tab
-   SmallArray <BotTask> m_filters; // task filters
-   SmallArray <UniqueBot> m_bots; // all available bots
+   Deque <String> m_saveBotNames {}; // bots names that persist upon changelevel
+   Deque <BotRequest> m_addRequests {}; // bot creation tab
+   SmallArray <BotTask> m_filters {}; // task filters
+   SmallArray <UniqueBot> m_bots {}; // all available bots
 
-   edict_t *m_killerEntity; // killer entity for bots
+   edict_t *m_killerEntity {}; // killer entity for bots
    FrustumData m_frustumData {};
 
 protected:
@@ -108,6 +108,7 @@ public:
 
    int getHumansCount (bool ignoreSpectators = false);
    int getAliveHumansCount ();
+   int getPlayerPriority (edict_t *ent);
 
    float getConnectTime (StringRef name, float original);
    float getAverageTeamKPD (bool calcForBots);
@@ -174,12 +175,12 @@ public:
       return m_economicsGood[team];
    }
 
-   int32 getLastWinner () const {
+   int32_t getLastWinner () const {
       return m_lastWinner;
    }
 
-   int32 getBotCount () {
-      return m_bots.length <int32> ();
+   int32_t getBotCount () {
+      return m_bots.length <int32_t> ();
    }
 
    // get the list of filters
